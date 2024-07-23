@@ -13,6 +13,10 @@ Create tensors of any shape and perform operations between them!
 * gemm
 * other optimization
 
+# purpose
+to learn rust + get better intuition behind tensors and auto differentiation behind
+sota ml frameworks.
+
 # example
 ```rust
 fn main() {
