@@ -5,7 +5,7 @@ Create tensors of any shape and perform operations between them!
 # done
 * tensors
 * tenosr ops
-* cpu parallelization
+* cpu blocked parallelization
 * matmul
 
 # to-do
