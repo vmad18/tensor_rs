@@ -1,4 +1,4 @@
-# tensor_rs (W.I.P)
+# tensor_rs (w.i.p)
 
 # done
 * tensors
