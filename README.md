@@ -11,6 +11,7 @@ Create tensors of any shape and perform operations between them!
 # to-do
 * autograd
 * gemm
+* other optimization
 
 # example
 ```rust
