@@ -20,12 +20,19 @@ fn main() {
 
   let mut result = x.mm(y).unwrap(); // matmul tensors!
 
-  let mut w = Tensor::<i32>::new_ones(&[64, 128, 128, 64]); 
-  w.flatten(0, true).expect("flatten unsuccessful!"); // params - dimension, inplace | flatten tensor
-  w.sum(0, false, false).expect("could not sum!").unwrap(); // params - dimension, inplace | sum across any dimension
+  let mut w1 = Tensor::<i32>::new_ones(&[64, 128, 128, 64]);
+  let mut w2 = Tensor::<i32>::new_ones(&[128, 1, 64]);
 
-  result.sin(); | apply trig functions across a tensor
+  let mut tnsr_sum = w1.clone() + w2.clone(); // tensor ops over matched dimensions!
 
-  //...and a lot more functionality!
+  tnsr_sum.transpose((2, 3), true).except("could not transpose!"); // transpose and permute tensors!
+  tnsr_sum.permute(0, 1, 3, 2).except("could not permute!");
+
+  w1.flatten(0, true).expect("flatten unsuccessful!"); // params - dimension, inplace | flatten tensor
+  w2.sum(0, false, false).expect("could not sum!").unwrap(); // params - dimension, inplace | sum across any dimension
+
+  result.sin(); // apply trig functions across a tensor
+
+  //...and a lot of other stuff :) 
 }
 ```
