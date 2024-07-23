@@ -1,11 +1,11 @@
 # tensor_rs (W.I.P)
 
-# Done
+# done
 * tensors
 * tenosr ops
 * cpu parallelization
 * matmul
 
-# TODO
+# to-do
 * autograd
 * gemm
