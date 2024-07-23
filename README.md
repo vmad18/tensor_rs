@@ -26,10 +26,10 @@ fn main() {
   let mut tnsr_sum = w1.clone() + w2.clone(); // tensor ops over matched dimensions!
 
   tnsr_sum.transpose((2, 3), true).except("could not transpose!"); // transpose and permute tensors!
-  tnsr_sum.permute(0, 1, 3, 2).except("could not permute!");
+  tnsr_sum.permute(&[0, 1, 3, 2]).except("could not permute!");
 
-  w1.flatten(0, true).expect("flatten unsuccessful!"); // params - dimension, inplace | flatten tensor
-  w2.sum(0, false, false).expect("could not sum!").unwrap(); // params - dimension, inplace | sum across any dimension
+  w1.flatten(0, true).expect("flatten unsuccessful!"); // params - dimension, inplace | flatten tensors!
+  w2.sum(0, false, false).expect("could not sum!").unwrap(); // params - dimension, inplace | sum tensors across any dimension!
 
   result.sin(); // apply trig functions across a tensor
 
