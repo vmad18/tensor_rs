@@ -25,5 +25,7 @@ fn main() {
   w.sum(0, false, false).expect("could not sum!").unwrap(); // params - dimension, inplace | sum across any dimension
 
   result.sin(); | apply trig functions across a tensor
+
+  //...and a lot more functionality!
 }
 ```
