@@ -1,0 +1,867 @@
+use crate::utils::ops::TensorOps;
+use crate::utils::dtype::DType;
+use crate::utils::{Print, ToSlice};
+use crate::utils::consts::TENSOR_THREADING;
+use std::collections::HashMap;
+use std::fmt;
+use std::fmt::{Debug, Formatter};
+use std::ops::{Add, Div, Mul, Sub};
+
+// threading - T/F | auto - T/F | thread_count | usize
+
+#[derive(Debug)]
+pub struct Tensor<'a, T: DType> {
+    pub data: Vec<T>,
+    pub shape: Vec<usize>,
+    pub strides: Vec<usize>,
+    pub children: Option<Vec<&'a Tensor<'a, T>>>,
+    pub parents: Option<Vec<&'a Tensor<'a, T>>>,
+}
+
+//TODO unsqueeze method
+impl<'a, T: DType> Tensor<'a, T> {
+    // init tensor with data and shape tensor
+    pub fn new(data: &[T], shape: &[usize]) -> Self {
+        let data = data.to_vec();
+        let shape = shape.to_vec();
+
+        assert_eq!(
+            Tensor::<T>::num_elm(&shape),
+            data.len(),
+            "Tensor has mismatched shape and elements!"
+        );
+
+        let strides = Tensor::<T>::comp_strides(&shape);
+        Tensor {
+            data,
+            shape,
+            strides,
+            children: None,
+            parents: None,
+        }
+    }
+
+    // returns cls tensor's rank
+    pub fn rank(&self) -> usize {
+        self.shape.len()
+    }
+
+    // returns the num elements in the tensor
+    pub fn num_elms(&self) -> usize {
+        self.data.len()
+    }
+
+    // TODO make Shape stuct
+    // compares other shape with cls tensor's shape. optional dimension to skip during comparison
+    fn cmp_shape(&self, other_shape: &[usize], ignore_dim: Option<usize>) -> bool {
+        if other_shape.len() != self.rank() {
+            return false;
+        }
+
+        for i in 0..self.rank() {
+            if let Some(dim) = ignore_dim {
+                if dim == i {
+                    continue;
+                }
+            }
+            if self.shape[i] != other_shape[i] {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    // static init for 0 tensor of a shape
+    pub fn new_zeros(shape: &[usize]) -> Tensor<'a, T> {
+        let elm = Tensor::<T>::num_elm(shape);
+        let data: Vec<T> = vec![T::zero(); elm];
+
+        Tensor::<T>::new(data.as_slice(), shape)
+    }
+
+    // static init for 1 tensor of a shape
+    pub fn new_ones(shape: &[usize]) -> Tensor<'a, T> {
+        let elm = Tensor::<T>::num_elm(shape);
+        let data: Vec<T> = vec![T::one(); elm];
+
+        Tensor::<T>::new(data.as_slice(), shape)
+    }
+
+    // static method to compute the strides based off tensor shape
+    fn comp_strides(shape: &[usize]) -> Vec<usize> {
+        let mut strides: Vec<usize> = vec![];
+        let mut tot: usize = 1;
+        let mut shape_vec = shape.to_vec();
+
+        shape_vec.reverse();
+
+        for i in shape_vec {
+            strides.push(tot);
+            tot *= i;
+        }
+
+        strides.reverse();
+        strides
+    }
+
+    // returns the number of elements in the tensor
+    pub fn num_elm(shape: &[usize]) -> usize {
+        let mut total: usize = 1;
+
+        for i in shape {
+            total *= i
+        }
+
+        total
+    }
+
+    // get tensor 1d data array index from tensor index
+    fn get_arr_idx(&self, idx: &[usize]) -> Result<usize, TensorOutOfBoundsError> {
+        let mut elm_idx: usize = 0;
+
+        if !(idx.len() <= self.rank()) {
+            return Err(TensorOutOfBoundsError::new(
+                "Index out of bounds!".to_string(),
+            ));
+        }
+
+        for (i, idx) in idx.iter().enumerate() {
+            if !(*idx <= self.shape[i]) {
+                return Err(TensorOutOfBoundsError::new(format!(
+                    "Index of dimension {} is out of scope. Expected in {}.",
+                    i, self.shape[i]
+                )));
+            }
+            elm_idx += *idx * self.strides[i];
+        }
+
+        Ok(elm_idx)
+    }
+
+    // set the value at tensor 1d data array from tensor index
+    pub fn set_elm(&mut self, value: T, idx: &[usize]) {
+        let idx = self
+            .get_arr_idx(idx)
+            .expect("Tensor out of bounds for idx!");
+        self.data[idx] = value;
+    }
+
+    // get the value at tensor 1d data array from tensor index
+    pub fn get_elm(&self, idx: &[usize]) -> &T {
+        let idx = self
+            .get_arr_idx(idx)
+            .expect("Tensor out of bounds for idx!");
+        &self.data[idx]
+    }
+
+    //// set and get Slice ////
+    //////////////////////////////////////////
+    pub fn set_slice(
+        &mut self,
+        idxs: Slice,
+        other: Tensor<T>,
+    ) -> Result<(), TensorMismatchedShapeError> {
+        if !other.cmp_shape(&idxs.shape, None) {
+            return Err(TensorMismatchedShapeError);
+        }
+
+        let (old_idxs, new_idxs) = idxs
+            .get_idxs_from_slice(&self.shape)
+            .expect("Could not get slice indexes!");
+
+        for (i, idx) in old_idxs.iter().enumerate() {
+            let val = other.get_elm(new_idxs[i].as_slice());
+            self.set_elm(val.clone(), idx.as_slice());
+        }
+
+        Ok(())
+    }
+
+    pub fn get_slice(&self, idxs: Slice) -> Result<Tensor<T>, TensorOutOfBoundsError> {
+        let (old_idxs, new_idxs) = idxs
+            .get_idxs_from_slice(&self.shape)
+            .expect("Could not get slice indexes!");
+        let new_shape = idxs.shape;
+
+        let mut empty = Tensor::<T>::new_zeros(&new_shape);
+
+        for (i, idx) in old_idxs.iter().enumerate() {
+            let elm = self.get_elm(idx.as_slice()).clone();
+            empty.set_elm(elm, new_idxs[i].as_slice())
+        }
+
+        Ok(empty)
+    }
+    //////////////////////////////////////////
+    //////////////////////////////////////////
+
+    // reshape tensor to new shape. optional deep copy or returns a new tensor
+    pub fn reshape(&mut self, shape: &[usize], inplace: bool) -> Option<Tensor<T>> {
+        let strides = Tensor::<T>::comp_strides(shape);
+
+        if inplace {
+            self.shape = shape.to_vec();
+            self.strides = strides;
+        } else {
+            return Some(Tensor::new(
+                self.data.clone().as_slice(),
+                shape,
+            ));
+        }
+
+        None
+    }
+
+    // 0 indexed concat - combines two tensors at a dim
+    // lowkey forgot how i did this lol...
+    pub fn concat(
+        &mut self,
+        other: &Tensor<T>,
+        dim: usize,
+    ) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+        if !self.cmp_shape(&other.shape, Some(dim)) {
+            return Err(TensorMismatchedShapeError);
+        }
+
+        let mut idxs_1 = Vec::<Vec<(usize, usize)>>::new();
+        let mut idxs_2 = Vec::<Vec<(usize, usize)>>::new();
+        idxs_1.push(vec![]);
+        idxs_2.push(vec![]);
+
+        let mut new_shape = Vec::<usize>::new();
+
+        for d in 0..self.rank() {
+            if d == dim {
+                new_shape.push(self.shape[d] + other.shape[d]);
+
+                for i in 0..idxs_1.len() {
+                    idxs_1[i].push((0, self.shape[d]));
+                    idxs_2[i].push((0, other.shape[d]));
+                }
+            } else if d < dim {
+                new_shape.push(self.shape[d]);
+                let mut replace1 = Vec::<Vec<(usize, usize)>>::new();
+                let mut replace2 = Vec::<Vec<(usize, usize)>>::new();
+                for j in 0..idxs_1.len() {
+                    for i in 0..self.shape[d] {
+                        let mut v1 = idxs_1[j].clone();
+
+                        v1.push((i, i + 1));
+                        replace1.push(v1);
+
+                        let mut v2 = idxs_2[j].clone();
+                        v2.push((i, i + 1));
+                        replace2.push(v2);
+                    }
+                }
+
+                idxs_1 = replace1;
+                idxs_2 = replace2;
+            } else {
+                new_shape.push(self.shape[d]);
+
+                for i in 0..idxs_1.len() {
+                    idxs_1[i].push((0, self.shape[d]));
+                    idxs_2[i].push((0, self.shape[d]));
+                }
+            }
+        }
+
+        let mut new_data: Vec<T> = vec![];
+        for i in 0..idxs_1.len() {
+            let t1 = self
+                .get_slice(Slice::new(&idxs_1[i]))
+                .expect("Out of bounds error!");
+            let t2 = other
+                .get_slice(Slice::new(&idxs_2[i]))
+                .expect("Out of bounds error!");
+
+            new_data.extend(t1.data);
+            new_data.extend(t2.data);
+        }
+
+        Ok(Tensor::new(&new_data.as_slice(), new_shape.as_slice()))
+    }
+
+    // transposes tensor over any two dims
+    pub fn transpose(
+        &mut self,
+        dim: (usize, usize),
+        inplace: bool,
+    ) -> Result<Option<Tensor<T>>, TensorOutOfBoundsError> {
+        if !(dim.0 < self.rank() && dim.1 < self.rank()) {
+            return Err(TensorOutOfBoundsError::new(
+                "TensorOutOfBoundsError! Indexing out of Tensor!".to_string(),
+            ));
+        }
+
+        let mut new_shape = self.shape.clone();
+        let cl = new_shape[dim.0];
+        new_shape[dim.0] = new_shape[dim.1];
+        new_shape[dim.1] = cl;
+
+        let mut empty = Tensor::<T>::new_zeros(&new_shape);
+        let mut set_slice: Vec<(usize, usize)> = vec![];
+
+        for (i, s) in new_shape.iter().enumerate() {
+            if i == dim.0 || i == dim.1 {
+                set_slice.push((0, 0))
+            } else {
+                set_slice.push((0, *s))
+            }
+        }
+
+        let mut get_slice = set_slice.clone();
+
+        for j in 0..self.shape[dim.1] {
+            for i in 0..self.shape[dim.0] {
+                set_slice[dim.0] = (j, j + 1);
+                set_slice[dim.1] = (i, i + 1);
+
+                get_slice[dim.0] = (i, i + 1);
+                get_slice[dim.1] = (j, j + 1);
+
+                let tnsr_slice = self.get_slice(Slice::new(get_slice.as_slice())).unwrap();
+                empty
+                    .set_slice(Slice::new(set_slice.as_slice()), tnsr_slice)
+                    .expect("Could not transpose!");
+            }
+        }
+
+        if inplace {
+            self.data = empty.data;
+            self.shape = new_shape.clone();
+            self.strides = Tensor::<T>::comp_strides(&new_shape);
+        } else {
+            return Ok(Some(empty));
+        }
+
+        Ok(None)
+    }
+
+    // 0 idx - performs a series of transposes along the tensor's axis
+    pub fn permute(&mut self, dim: &[usize]) -> Result<(), TensorMismatchedShapeError> {
+        if dim.len() != self.rank() {
+            return Err(TensorMismatchedShapeError);
+        }
+
+        let r: usize = self.rank().clone();
+        let mut visited = vec![0; r];
+        let mut new_shape: Vec<usize> = Vec::<usize>::new();
+        for i in dim {
+            if *i >= self.rank() {
+                return Err(TensorMismatchedShapeError);
+            }
+
+            if visited[*i] == 1 {
+                return Err(TensorMismatchedShapeError);
+            }
+
+            new_shape.push(*i);
+            visited[*i] = 1;
+        }
+
+        let dim: Vec<usize> = dim.to_vec();
+        let mut map: HashMap<usize, usize> = HashMap::new();
+
+        for (i, e) in dim.iter().enumerate() {
+            if i == *e {
+                continue;
+            }
+
+            let t_0 = *map.get(&i).unwrap_or(&i);
+            let t_1 = *map.get(e).unwrap_or(e);
+
+            // idxs have transposed each other
+            if t_1 == i && t_0 == *e {
+                continue;
+            }
+
+            self.transpose((t_0, t_1), true)
+                .expect(format!("Could not transpose tensor at dim {} and {}!", e, i).as_str());
+
+            map.insert(t_0, t_1);
+            map.insert(t_1, t_0);
+        }
+
+        Ok(())
+    }
+
+    // matches tensors across their axes
+    pub fn match_dims(
+        self,
+        other: Tensor<'a, T>,
+        ignore_after_dim: Option<usize>,
+    ) -> Option<(Self, Tensor<T>, Vec<usize>, Vec<usize>, bool)> {
+        let mut first_out = true;
+        let (larger, mut smaller) = if self.rank() >= other.rank() {
+            (self, other)
+        } else {
+            first_out = false;
+            (other, self)
+        };
+
+        let mut matched: Vec<usize> = vec![0; larger.rank()];
+        if larger.rank() > smaller.rank() {
+            for i in 0..larger.rank() {
+                if i >= smaller.rank() {
+                    matched[larger.rank() - i - 1] = 1;
+                } else {
+                    matched[larger.rank() - i - 1] = smaller.shape[smaller.rank() - i - 1];
+                }
+            }
+            smaller.reshape(matched.as_slice(), true);
+        }
+
+        let mut repeats_l = Vec::<usize>::new();
+        let mut repeats_s = Vec::<usize>::new();
+
+        let mut ignore_dim = larger.rank();
+        if let Some(dim) = ignore_after_dim {
+            ignore_dim = larger.rank() - dim - 1;
+        }
+        for (idx, s) in smaller.shape.iter().rev().enumerate() {
+            let e_idx = larger.shape.len() - idx - 1;
+            if *s == larger.shape[e_idx] || ignore_dim >= idx {
+                repeats_l.push(1);
+                repeats_s.push(1);
+            } else if *s == 1 {
+                repeats_l.push(1);
+                repeats_s.push(larger.shape[e_idx]);
+            } else if larger.shape[e_idx] == 1 {
+                repeats_l.push(*s);
+                repeats_s.push(1);
+            } else {
+                return None;
+            }
+        }
+
+        let diff_dims = larger.rank() - smaller.rank();
+
+        for i in 0..diff_dims {
+            let e_idx = larger.rank() - i - 1;
+            repeats_l.push(1);
+            repeats_s.push(larger.shape[e_idx]);
+        }
+
+        let same: bool = if repeats_s.iter().sum::<usize>() == repeats_s.len()
+            && repeats_l.iter().sum::<usize>() == repeats_l.len()
+        {
+            true
+        } else {
+            false
+        };
+
+        let repeats_l: Vec<usize> = repeats_l.into_iter().rev().collect();
+        let repeats_s: Vec<usize> = repeats_s.into_iter().rev().collect();
+
+        if first_out {
+            Some((larger, smaller, repeats_l, repeats_s, same))
+        } else {
+            Some((smaller, larger, repeats_s, repeats_l, same))
+        }
+    }
+
+    pub fn repeat_dim(&mut self, repeat: &[usize]) -> Result<(), TensorMismatchedShapeError> {
+        if self.rank() != repeat.len() { return Err(TensorMismatchedShapeError); }
+
+        let mut prev_data = Vec::<Vec<T>>::new();
+        let mut repeated_data = self.data.clone();
+
+        let mut new_shape = Vec::<usize>::new();
+        let mut global_stride = 1;
+        for (idx, i) in repeat.to_vec().iter().rev().enumerate() {
+            if *i == 0 {
+                return Err(TensorMismatchedShapeError);
+            }
+
+            if *i != 1 {
+                let dim_shape = global_stride
+                    * self.shape[self.rank() - idx - 1]
+                    * self.strides[self.rank() - idx - 1];
+                let mut group = Vec::<T>::new();
+
+                for (d_idx, e) in repeated_data.iter().enumerate() {
+                    if d_idx % dim_shape == 0 && d_idx != 0 {
+                        prev_data.push(group);
+                        group = Vec::<T>::new();
+                    }
+
+                    group.push(e.clone());
+                }
+
+                prev_data.push(group);
+
+                for pd in &mut prev_data {
+                    let base = pd.clone();
+                    for _ in 0..(*i - 1) {
+                        pd.extend(base.clone());
+                    }
+                }
+            }
+
+            global_stride *= i;
+            new_shape.push(self.shape[self.rank() - idx - 1] * *i);
+            if *i == 1 {
+                continue;
+            }
+
+            let mut collapsed = Vec::<T>::new();
+            for pd in prev_data {
+                for e in pd {
+                    collapsed.push(e);
+                }
+            }
+
+            repeated_data = collapsed;
+            prev_data = vec![];
+        }
+
+        let new_shape: Vec<usize> = new_shape.into_iter().rev().collect();
+
+        self.data = repeated_data;
+        self.shape = new_shape;
+        self.strides = Tensor::<T>::comp_strides(&self.shape);
+
+        Ok(())
+    }
+
+    pub fn sum(&mut self, dim: usize, keepdim: bool, inplace: bool) -> Result<Option<Tensor<'a, T>>, TensorMismatchedShapeError> {
+        if dim >= self.rank() {
+            return Err(TensorMismatchedShapeError);
+        }
+
+        let mut base_idx: Vec<(usize, usize)> = vec![(0, 0); self.rank()];
+        let mut out_shape: Vec<usize> = vec![];
+        for i in 0..self.rank() {
+            if i == dim {
+                base_idx[i] = (0, 0);
+                if dim == 0 && self.rank() == 1 {
+                    out_shape.push(1);
+                } else if keepdim {
+                    out_shape.push(1);
+                }
+            } else {
+                base_idx[i] = (0, self.shape[i]);
+                out_shape.push(self.shape[i]);
+            }
+        }
+
+        let mut aggregator = Tensor::<T>::new_zeros(out_shape.as_slice());
+
+        for i in 0..self.shape[dim] {
+            base_idx[dim] = (i, i + 1);
+            let mut collapsed = self.get_slice(Slice::new(base_idx.as_slice()))
+                .expect("Could not slice tensor at given position!");
+            collapsed.reshape(out_shape.as_slice(), true);
+            aggregator = aggregator + collapsed;
+        }
+
+        if inplace {
+            self.data = aggregator.data;
+            self.shape = out_shape;
+            self.strides = Tensor::<T>::comp_strides(self.shape.as_slice());
+        } else {
+            return Ok(Some(Tensor::<T>::new(aggregator.data.as_slice(), aggregator.shape.as_slice())));
+        }
+
+        Ok(None)
+    }
+
+    pub fn flatten(&mut self, dim: usize, inplace: bool) -> Result<Option<Tensor<T>>, TensorMismatchedShapeError> {
+        if dim >= self.rank() { return Err(TensorMismatchedShapeError); }
+
+        let mut out_dim: Vec<usize> = vec![];
+        let mut agg: usize = 1;
+
+        for (idx, i) in self.shape.iter().enumerate() {
+            if idx < dim {
+                out_dim.push(*i);
+            } else {
+                agg *= i;
+            }
+        }
+
+        out_dim.push(agg);
+        if inplace {
+            return Ok(self.reshape(out_dim.as_slice(), true));
+        }
+
+        Ok(self.reshape(out_dim.as_slice(), false))
+    }
+
+    pub fn cast_fp32(self) -> Tensor<'a, f32> {
+        let data: Vec<f32> = self.data.iter().map(|x| x.to_fp32()).collect();
+        let shape = self.shape;
+
+        Tensor::<f32>::new(data.as_slice(), shape.as_slice())
+    }
+
+    // element ops
+    fn matmul(&mut self,
+              mut other: Tensor<'a, T>,
+              transpose_inner: bool,
+              transpose_outer: bool) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+        if self.rank() < 2 || other.rank() < 2 {
+            return Err(TensorMismatchedShapeError);
+        }
+
+        if transpose_inner {
+            self.transpose((self.rank() - 2, self.rank() - 1), true).expect("Could not transpose!");
+        }
+
+        if transpose_outer {
+            other.transpose((other.rank() - 2, other.rank() - 1), true).expect("Could not transpose!");
+        }
+
+        let mut a = self;
+        let (a, mut other, shape) = TensorOps::new(TENSOR_THREADING).match_tnsrs(a.clone(), other.clone(), Some(a.rank() - 2));
+
+        if a.shape[a.rank() - 1] != other.shape[other.rank() - 2] {
+            return Err(TensorMismatchedShapeError);
+        }
+
+        let mut base_idx_1: Vec<(usize, usize)> = vec![];
+        let mut base_idx_2: Vec<(usize, usize)> = vec![];
+        let mut base_idx_3: Vec<(usize, usize)> = vec![];
+
+        let mut out_shape: Vec<usize> = vec![];
+
+        for i in 0..a.rank() - 2 {
+            base_idx_1.push((0, a.shape[i]));
+            base_idx_2.push((0, other.shape[i]));
+            base_idx_3.push((0, a.shape[i]));
+            out_shape.push(a.shape[i]);
+        }
+
+        base_idx_1.push((0, 0));
+        base_idx_1.push((0, a.shape[a.rank() - 1]));
+
+        base_idx_2.push((0, 0));
+        base_idx_2.push((0, other.shape[other.rank() - 2]));
+
+        base_idx_3.push((0, 0));
+        base_idx_3.push((0, 0));
+
+        out_shape.push(a.shape[a.rank() - 2]);
+        out_shape.push(other.shape[other.rank() - 1]);
+
+        let mut aggregator = Tensor::new_zeros(out_shape.as_slice());
+
+
+        other.transpose((other.rank() - 2, other.rank() - 1), true).expect("Could not transpose!");
+        for i in 0..a.shape[a.rank() - 2] {
+            base_idx_1[a.rank() - 2] = (i, i + 1);
+            base_idx_3[a.rank() - 2] = (i, i + 1);
+
+            let chunk_1 = a.get_slice(Slice::new(base_idx_1.as_slice())).expect("Could not slice tensor!");
+            for j in 0..other.shape[a.rank() - 2] {
+                base_idx_2[other.rank() - 2] = (j, j + 1);
+                base_idx_3[other.rank() - 1] = (j, j + 1);
+
+                let chunk_2 = other.get_slice(base_idx_2.to_slice()).expect("Could not slice tensor!");
+                let mut result = chunk_1.clone() * chunk_2;
+                result.sum(result.rank() - 1, true, true).expect("Could not sum over dim!");
+
+                aggregator.set_slice(base_idx_3.to_slice(), result).expect("Could not set slice!");
+            }
+        }
+
+
+        Ok(aggregator)
+    }
+
+    // AB
+    pub fn mm(&mut self,
+              other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+        self.matmul(other, false, false)
+    }
+
+    // (A^T)B
+    pub fn dot(&mut self,
+               other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+        let mut result = self.matmul(other, true, false).unwrap();
+        result.flatten(result.rank() - 2, true).expect("Could not flatten for dot prod");
+        Ok(result)
+    }
+
+    // A(B^T)
+    pub fn outer(&mut self,
+                 other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+        self.matmul(other, false, true)
+    }
+
+    pub fn sin(self) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).sin(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
+    }
+
+    pub fn cos(self) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).cos(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
+    }
+
+    pub fn tan(self) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).tan(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
+    }
+}
+
+impl<'a, T: DType> Add for Tensor<'a, T> {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        TensorOps::new(TENSOR_THREADING).add(self, other)
+    }
+}
+
+impl<'a, T: DType> Mul for Tensor<'a, T> {
+    type Output = Self;
+
+    fn mul(self, other: Self) -> Self {
+        TensorOps::new(TENSOR_THREADING).mul(self, other)
+    }
+}
+
+impl<'a, T: DType> Div for Tensor<'a, T> {
+    type Output = Self;
+
+    fn div(self, other: Self) -> Self {
+        TensorOps::new(TENSOR_THREADING).div(self, other)
+    }
+}
+
+impl<'a, T: DType> Sub for Tensor<'a, T> {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        TensorOps::new(TENSOR_THREADING).sub(self, other)
+    }
+}
+
+impl<'a, T: DType> Clone for Tensor<'a, T> {
+    fn clone(&self) -> Self {
+        Tensor::new(self.data.clone().as_slice(), self.shape.clone().as_slice())
+    }
+}
+
+impl<T: DType> fmt::Display for Tensor<'_, T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.data)
+    }
+}
+
+impl<T: DType> Print for Tensor<'_, T> {
+    fn print(&self) {
+        println!("{:?}", self);
+    }
+}
+
+
+#[derive(Debug)]
+pub struct TensorMismatchedShapeError;
+
+impl fmt::Display for TensorMismatchedShapeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Tensors have mismatched shapes!")
+    }
+}
+
+#[derive(Debug)]
+pub struct TensorOutOfBoundsError {
+    pub msg: String,
+}
+
+impl fmt::Display for TensorOutOfBoundsError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            format!(
+                "Indexing part of tensor that is out of bounds! {}",
+                self.msg
+            )
+        )
+    }
+}
+
+impl TensorOutOfBoundsError {
+    pub fn new(msg: String) -> Self {
+        TensorOutOfBoundsError { msg }
+    }
+}
+
+pub struct Slice<'b> {
+    pub slice: &'b [(usize, usize)],
+    pub shape: Vec<usize>,
+}
+
+impl<'b> Slice<'b> {
+    pub fn new(slice: &'b [(usize, usize)]) -> Self {
+        let mut shape: Vec<usize> = vec![];
+        for idx in slice {
+            shape.push(idx.1 - idx.0);
+        }
+
+        Slice { slice, shape }
+    }
+
+    fn rank(&self) -> usize {
+        return self.shape.len();
+    }
+
+    // returns two sets of tensor indexes from tensor slice.
+    // first set is w.r.t the tensor's shape.
+    // second set returns a zero ref'd slice.
+    pub fn get_idxs_from_slice(
+        &self,
+        shape: &[usize],
+    ) -> Result<(Vec<Vec<usize>>, Vec<Vec<usize>>), TensorOutOfBoundsError> {
+        let mut old_idxs: Vec<Vec<usize>> = vec![];
+        let mut new_idxs: Vec<Vec<usize>> = vec![];
+
+        assert!(
+            self.rank() <= shape.len(),
+            "Indexing element out of bounds for Tensor."
+        );
+
+        // TODO? handle case for if when s_e.1 == s_e.0 - i don think it act. matter now
+        for (i, s_e) in self.slice.iter().enumerate() {
+            if !(s_e.1 <= shape[i] && s_e.1 >= s_e.0) {
+                return Err(TensorOutOfBoundsError::new(format!(
+                    "Index of dimension {} is not within range. Expected {} but got ({}, {}).",
+                    i, shape[i], s_e.0, s_e.1
+                )));
+            }
+
+            let mut replace = Vec::<Vec<usize>>::new();
+            let mut new_replace = Vec::<Vec<usize>>::new();
+            for j in s_e.0..s_e.1 {
+                if i == 0 {
+                    old_idxs.push(vec![j]);
+                    new_idxs.push(vec![j - s_e.0]);
+                } else {
+                    for v in &mut old_idxs.clone() {
+                        v.push(j);
+                        replace.push(v.clone());
+                    }
+
+                    for v in &mut new_idxs.clone() {
+                        v.push(j - s_e.0);
+                        new_replace.push(v.clone());
+                    }
+                }
+            }
+
+            if i != 0 {
+                old_idxs = replace;
+                new_idxs = new_replace;
+            }
+        }
+        Ok((old_idxs, new_idxs))
+    }
+}
+
+impl fmt::Display for Slice<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.slice)
+    }
+}

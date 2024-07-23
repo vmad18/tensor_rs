@@ -1,0 +1,1 @@
+pub const TENSOR_THREADING: (bool, bool, usize) = (false, true, 12);
