@@ -6,7 +6,8 @@ use std::thread::JoinHandle;
 
 use crate::tensor::Tensor;
 use crate::utils::dtype::DType;
-use crate::utils::Print;
+use crate::utils::{Print, ToTensor};
+use std::f32::consts::E;
 
 #[derive(Debug)]
 pub struct TensorOps {
@@ -44,7 +45,7 @@ unsafe impl<T> Send for SharedTensor<T> {}
 impl<T> SharedTensor<T> {
     pub fn new(data: T) -> Self {
         SharedTensor {
-            data: UnsafeCell::new(data)
+            data: UnsafeCell::new(data),
         }
     }
 
@@ -85,11 +86,11 @@ impl TensorOps {
     }
 
     pub fn init_ops_tc(threaded: bool, auto: bool, thread_count: usize) -> Self {
-/*        let sys_threads = thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1); // leave one thread left for the system
-        let thread_count = thread_count.min(sys_threads); // ensure that we don't fork bomb ourselves :p
-*/
+        /*        let sys_threads = thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1); // leave one thread left for the system
+                let thread_count = thread_count.min(sys_threads); // ensure that we don't fork bomb ourselves :p
+        */
         TensorOps {
             threaded,
             auto,
@@ -103,14 +104,13 @@ impl TensorOps {
         b: Tensor<'a, T>,
         ignore_dim: Option<usize>,
     ) -> (Tensor<'a, T>, Tensor<'a, T>, Vec<usize>) {
-
         if a.rank() == b.rank() {
             let mut j = 0;
             for i in 0..a.rank() {
                 if &a.shape[i] != &b.shape[i] {
                     break;
                 }
-                j+=1;
+                j += 1;
             }
 
             if j == a.rank() {
@@ -143,7 +143,8 @@ impl TensorOps {
         &self,
         a: Tensor<'a, T>,
         b: Tensor<'a, T>,
-        op: fn(&usize, &usize, &Vec<T>, &Vec<T>, &mut Vec<T>)) -> Tensor<'a, T> {
+        op: fn(&usize, &usize, &Vec<T>, &Vec<T>, &mut Vec<T>),
+    ) -> Tensor<'a, T> {
         let BLCK_SIZE = (a.num_elms() / self.thread_count).max(1);
 
         let (a, b, shape) = self.match_tnsrs(a, b, None);
@@ -171,7 +172,11 @@ impl TensorOps {
 
         let mut handles: Vec<JoinHandle<()>> = vec![];
         for i in (0..data_out_ref.get().len()).step_by(step_size) {
-            let a_m_ref = SharedTensor::new(a_m.get()[i..i + step_size].to_vec());
+            let a_m_ref = SharedTensor::new(a_m.get()[i..i + step_size].to_vec()); // i don't like
+                                                                                   // that I have
+                                                                                   // to make a
+                                                                                   // copy of the
+                                                                                   // chunk of 'a/b'
             let b_m_ref = SharedTensor::new(b_m.get()[i..i + step_size].to_vec());
             let data_out_ref = data_out_ref;
 
@@ -186,11 +191,11 @@ impl TensorOps {
             handles.push(handle);
         }
 
-        for h in handles { h.join().expect("panik!"); }
+        for h in handles {
+            h.join().expect("panik!");
+        }
 
-        let final_out: Vec<T> = data_out_ref.get_mut()
-            .drain(..a.num_elms())
-            .collect();
+        let final_out: Vec<T> = data_out_ref.get_mut().drain(..a.num_elms()).collect();
 
         Tensor::<T>::new(final_out.as_slice(), shape.as_slice())
     }
@@ -199,7 +204,8 @@ impl TensorOps {
         &self,
         a: Tensor<'a, T>,
         b: Tensor<'a, T>,
-        op: fn(&usize, &usize, &Vec<T>, &Vec<T>, &mut Vec<T>)) -> Tensor<'a, T> {
+        op: fn(&usize, &usize, &Vec<T>, &Vec<T>, &mut Vec<T>),
+    ) -> Tensor<'a, T> {
         let (a, b, shape) = self.match_tnsrs(a, b, None);
 
         let a_m = a.clone().data;
@@ -207,15 +213,19 @@ impl TensorOps {
 
         let mut output: Vec<T> = vec![T::zero(); a.num_elms()];
 
-        for i in 0..output.len() { op(&i, &output.len(), &a_m, &b_m, &mut output); }
+        for i in 0..output.len() {
+            op(&i, &output.len(), &a_m, &b_m, &mut output);
+        }
 
         Tensor::new(output.as_slice(), shape.as_slice())
     }
 
-    pub fn publish_signal<'a, T: DType>(&self,
-                                        a: Tensor<'a, T>,
-                                        b: Tensor<'a, T>,
-                                        sig: fn(&usize, &usize, &Vec<T>, &Vec<T>, &mut Vec<T>)) -> Tensor<'a, T> {
+    pub fn publish_signal<'a, T: DType>(
+        &self,
+        a: Tensor<'a, T>,
+        b: Tensor<'a, T>,
+        sig: fn(&usize, &usize, &Vec<T>, &Vec<T>, &mut Vec<T>),
+    ) -> Tensor<'a, T> {
         if self.threaded {
             self.blck_compute_op(a, b, sig)
         } else {
@@ -223,66 +233,68 @@ impl TensorOps {
         }
     }
 
-    pub fn add<'a, T: DType>(
-        &self,
-        a: Tensor<'a, T>,
-        b: Tensor<'a, T>,
-    ) -> Tensor<'a, T> {
-        let add_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| o[*i] = a[*i % step] + b[*i % step];
+    pub fn add<'a, T: DType>(&self, a: Tensor<'a, T>, b: Tensor<'a, T>) -> Tensor<'a, T> {
+        let add_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
+            o[*i] = a[*i % step] + b[*i % step]
+        };
         self.publish_signal(a, b, add_sig)
     }
 
-    pub fn sub<'a, T: DType>(
-        &self,
-        a: Tensor<'a, T>,
-        b: Tensor<'a, T>,
-    ) -> Tensor<'a, T> {
-        let add_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| o[*i] = a[*i % step] - b[*i % step];
+    pub fn sub<'a, T: DType>(&self, a: Tensor<'a, T>, b: Tensor<'a, T>) -> Tensor<'a, T> {
+        let add_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
+            o[*i] = a[*i % step] - b[*i % step]
+        };
         self.publish_signal(a, b, add_sig)
     }
 
-    pub fn mul<'a, T: DType>(
-        &self,
-        a: Tensor<'a, T>,
-        b: Tensor<'a, T>,
-    ) -> Tensor<'a, T> {
-        let mul_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| o[*i] = a[*i % step] * b[*i % step];
+    pub fn mul<'a, T: DType>(&self, a: Tensor<'a, T>, b: Tensor<'a, T>) -> Tensor<'a, T> {
+        let mul_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
+            o[*i] = a[*i % step] * b[*i % step]
+        };
         self.publish_signal(a, b, mul_sig)
     }
 
-    pub fn div<'a, T: DType>(
-        &self,
-        a: Tensor<'a, T>,
-        b: Tensor<'a, T>,
-    ) -> Tensor<'a, T> {
-        let mul_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| o[*i] = a[*i % step] / b[*i % step];
+    pub fn div<'a, T: DType>(&self, a: Tensor<'a, T>, b: Tensor<'a, T>) -> Tensor<'a, T> {
+        let mul_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
+            o[*i] = a[*i % step] / b[*i % step]
+        };
         self.publish_signal(a, b, mul_sig)
     }
 
-    pub fn sin<'a>(
-        &self,
-        a: Tensor<'a, f32>,
-        b: Tensor<'a, f32>,
-    ) -> Tensor<'a, f32> {
-        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, b: &Vec<f32>, o: &mut Vec<f32>| o[*i] = a[*i % step].sin();
-        self.publish_signal::<f32>(a, b, sin_sig)
+    pub fn sin<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+            o[*i] = a[*i % step].sin()
+        };
+        self.publish_signal::<f32>(a, _b, sin_sig)
     }
 
-    pub fn cos<'a>(
-        &self,
-        a: Tensor<'a, f32>,
-        b: Tensor<'a, f32>,
-    ) -> Tensor<'a, f32> {
-        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, b: &Vec<f32>, o: &mut Vec<f32>| o[*i] = a[*i % step].cos();
-        self.publish_signal::<f32>(a, b, sin_sig)
+    pub fn cos<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+            o[*i] = a[*i % step].cos()
+        };
+        self.publish_signal::<f32>(a, _b, sin_sig)
     }
 
-    pub fn tan<'a>(
-        &self,
-        a: Tensor<'a, f32>,
-        b: Tensor<'a, f32>,
-    ) -> Tensor<'a, f32> {
-        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, b: &Vec<f32>, o: &mut Vec<f32>| o[*i] = a[*i % step].tan();
-        self.publish_signal::<f32>(a, b, sin_sig)
+    pub fn tan<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+            o[*i] = a[*i % step].tan()
+        };
+        self.publish_signal::<f32>(a, _b, sin_sig)
+    }
+
+    fn _exp<'a>(&self, a: Tensor<'a, f32>, b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let exp_sig = |i: &usize, step: &usize, a: &Vec<f32>, b: &Vec<f32>, o: &mut Vec<f32>| {
+            o[*i] = (a[*i % step] * b[0].ln()).exp();
+        };
+        self.publish_signal(a, b, exp_sig)
+    }
+
+    pub fn exp<'a>(&self, a: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let b: Tensor<f32> = E.tnsr();
+        self._exp(a, b)
+    }
+
+    pub fn pow<'a>(&self, a: Tensor<'a, f32>, b: f32) -> Tensor<'a, f32> {
+        self._exp(a, b.tnsr())
     }
 }

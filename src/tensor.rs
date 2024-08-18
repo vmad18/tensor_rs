@@ -1,7 +1,7 @@
-use crate::utils::ops::TensorOps;
-use crate::utils::dtype::DType;
-use crate::utils::{Print, ToSlice};
 use crate::utils::consts::TENSOR_THREADING;
+use crate::utils::dtype::DType;
+use crate::utils::ops::TensorOps;
+use crate::utils::{Print, ToSlice};
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
@@ -204,10 +204,7 @@ impl<'a, T: DType> Tensor<'a, T> {
             self.shape = shape.to_vec();
             self.strides = strides;
         } else {
-            return Some(Tensor::new(
-                self.data.clone().as_slice(),
-                shape,
-            ));
+            return Some(Tensor::new(self.data.clone().as_slice(), shape));
         }
 
         None
@@ -402,28 +399,32 @@ impl<'a, T: DType> Tensor<'a, T> {
             (other, self)
         };
 
-        let mut matched: Vec<usize> = vec![0; larger.rank()];
+        let mut matched_axes: Vec<usize> = vec![0; larger.rank()];
         if larger.rank() > smaller.rank() {
             for i in 0..larger.rank() {
                 if i >= smaller.rank() {
-                    matched[larger.rank() - i - 1] = 1;
+                    matched_axes[larger.rank() - i - 1] = 1;
                 } else {
-                    matched[larger.rank() - i - 1] = smaller.shape[smaller.rank() - i - 1];
+                    matched_axes[larger.rank() - i - 1] = smaller.shape[smaller.rank() - i - 1];
                 }
             }
-            smaller.reshape(matched.as_slice(), true);
+            smaller.reshape(matched_axes.as_slice(), true);
         }
 
         let mut repeats_l = Vec::<usize>::new();
         let mut repeats_s = Vec::<usize>::new();
 
-        let mut ignore_dim = larger.rank();
+        let mut ignore_dim = 0;
+        let mut ignore: bool = false;
         if let Some(dim) = ignore_after_dim {
             ignore_dim = larger.rank() - dim - 1;
+            ignore = true;
         }
+
         for (idx, s) in smaller.shape.iter().rev().enumerate() {
+            // don't use rev
             let e_idx = larger.shape.len() - idx - 1;
-            if *s == larger.shape[e_idx] || ignore_dim >= idx {
+            if *s == larger.shape[e_idx] || (ignore_dim >= idx && ignore) {
                 repeats_l.push(1);
                 repeats_s.push(1);
             } else if *s == 1 {
@@ -433,20 +434,12 @@ impl<'a, T: DType> Tensor<'a, T> {
                 repeats_l.push(*s);
                 repeats_s.push(1);
             } else {
-                return None;
+                return None; // why did i add this line lol? i don't wanna mess w/ it
             }
         }
 
-        let diff_dims = larger.rank() - smaller.rank();
-
-        for i in 0..diff_dims {
-            let e_idx = larger.rank() - i - 1;
-            repeats_l.push(1);
-            repeats_s.push(larger.shape[e_idx]);
-        }
-
-        let same: bool = if repeats_s.iter().sum::<usize>() == repeats_s.len()
-            && repeats_l.iter().sum::<usize>() == repeats_l.len()
+        let same: bool = if repeats_s.iter().sum::<usize>() == smaller.data.len()
+            && repeats_l.iter().sum::<usize>() == larger.data.len()
         {
             true
         } else {
@@ -464,7 +457,9 @@ impl<'a, T: DType> Tensor<'a, T> {
     }
 
     pub fn repeat_dim(&mut self, repeat: &[usize]) -> Result<(), TensorMismatchedShapeError> {
-        if self.rank() != repeat.len() { return Err(TensorMismatchedShapeError); }
+        if self.rank() != repeat.len() {
+            return Err(TensorMismatchedShapeError);
+        }
 
         let mut prev_data = Vec::<Vec<T>>::new();
         let mut repeated_data = self.data.clone();
@@ -527,7 +522,12 @@ impl<'a, T: DType> Tensor<'a, T> {
         Ok(())
     }
 
-    pub fn sum(&mut self, dim: usize, keepdim: bool, inplace: bool) -> Result<Option<Tensor<'a, T>>, TensorMismatchedShapeError> {
+    pub fn sum(
+        &mut self,
+        dim: usize,
+        keepdim: bool,
+        inplace: bool,
+    ) -> Result<Option<Tensor<'a, T>>, TensorMismatchedShapeError> {
         if dim >= self.rank() {
             return Err(TensorMismatchedShapeError);
         }
@@ -552,7 +552,8 @@ impl<'a, T: DType> Tensor<'a, T> {
 
         for i in 0..self.shape[dim] {
             base_idx[dim] = (i, i + 1);
-            let mut collapsed = self.get_slice(Slice::new(base_idx.as_slice()))
+            let mut collapsed = self
+                .get_slice(Slice::new(base_idx.as_slice()))
                 .expect("Could not slice tensor at given position!");
             collapsed.reshape(out_shape.as_slice(), true);
             aggregator = aggregator + collapsed;
@@ -563,14 +564,23 @@ impl<'a, T: DType> Tensor<'a, T> {
             self.shape = out_shape;
             self.strides = Tensor::<T>::comp_strides(self.shape.as_slice());
         } else {
-            return Ok(Some(Tensor::<T>::new(aggregator.data.as_slice(), aggregator.shape.as_slice())));
+            return Ok(Some(Tensor::<T>::new(
+                aggregator.data.as_slice(),
+                aggregator.shape.as_slice(),
+            )));
         }
 
         Ok(None)
     }
 
-    pub fn flatten(&mut self, dim: usize, inplace: bool) -> Result<Option<Tensor<T>>, TensorMismatchedShapeError> {
-        if dim >= self.rank() { return Err(TensorMismatchedShapeError); }
+    pub fn flatten(
+        &mut self,
+        dim: usize,
+        inplace: bool,
+    ) -> Result<Option<Tensor<T>>, TensorMismatchedShapeError> {
+        if dim >= self.rank() {
+            return Err(TensorMismatchedShapeError);
+        }
 
         let mut out_dim: Vec<usize> = vec![];
         let mut agg: usize = 1;
@@ -599,24 +609,34 @@ impl<'a, T: DType> Tensor<'a, T> {
     }
 
     // element ops
-    fn matmul(&mut self,
-              mut other: Tensor<'a, T>,
-              transpose_inner: bool,
-              transpose_outer: bool) -> Result<Tensor<T>, TensorMismatchedShapeError> {
-        if self.rank() < 2 || other.rank() < 2 {
+    fn matmul(
+        &mut self,
+        mut other: Tensor<'a, T>,
+        transpose_inner: bool,
+        transpose_outer: bool,
+    ) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+        let mut this = (&mut *self).clone();
+
+        if this.rank() < 2 || other.rank() < 2 {
             return Err(TensorMismatchedShapeError);
         }
 
         if transpose_inner {
-            self.transpose((self.rank() - 2, self.rank() - 1), true).expect("Could not transpose!");
+            this.transpose((this.rank() - 2, this.rank() - 1), true)
+                .expect("Could not transpose!");
         }
 
         if transpose_outer {
-            other.transpose((other.rank() - 2, other.rank() - 1), true).expect("Could not transpose!");
+            other
+                .transpose((other.rank() - 2, other.rank() - 1), true)
+                .expect("Could not transpose!");
         }
 
-        let mut a = self;
-        let (a, mut other, shape) = TensorOps::new(TENSOR_THREADING).match_tnsrs(a.clone(), other.clone(), Some(a.rank() - 2));
+        let (a, mut other, _shape) = TensorOps::new(TENSOR_THREADING).match_tnsrs(
+            this,
+            other.clone(),
+            Some(self.rank() - 2),
+        );
 
         if a.shape[a.rank() - 1] != other.shape[other.rank() - 2] {
             return Err(TensorMismatchedShapeError);
@@ -649,46 +669,53 @@ impl<'a, T: DType> Tensor<'a, T> {
 
         let mut aggregator = Tensor::new_zeros(out_shape.as_slice());
 
-
-        other.transpose((other.rank() - 2, other.rank() - 1), true).expect("Could not transpose!");
+        other
+            .transpose((other.rank() - 2, other.rank() - 1), true)
+            .expect("Could not transpose!");
         for i in 0..a.shape[a.rank() - 2] {
             base_idx_1[a.rank() - 2] = (i, i + 1);
             base_idx_3[a.rank() - 2] = (i, i + 1);
 
-            let chunk_1 = a.get_slice(Slice::new(base_idx_1.as_slice())).expect("Could not slice tensor!");
+            let chunk_1 = a
+                .get_slice(Slice::new(base_idx_1.as_slice()))
+                .expect("Could not slice tensor!");
             for j in 0..other.shape[a.rank() - 2] {
                 base_idx_2[other.rank() - 2] = (j, j + 1);
                 base_idx_3[other.rank() - 1] = (j, j + 1);
 
-                let chunk_2 = other.get_slice(base_idx_2.to_slice()).expect("Could not slice tensor!");
+                let chunk_2 = other
+                    .get_slice(base_idx_2.to_slice())
+                    .expect("Could not slice tensor!");
                 let mut result = chunk_1.clone() * chunk_2;
-                result.sum(result.rank() - 1, true, true).expect("Could not sum over dim!");
+                result
+                    .sum(result.rank() - 1, true, true)
+                    .expect("Could not sum over dim!");
 
-                aggregator.set_slice(base_idx_3.to_slice(), result).expect("Could not set slice!");
+                aggregator
+                    .set_slice(base_idx_3.to_slice(), result)
+                    .expect("Could not set slice!");
             }
         }
-
 
         Ok(aggregator)
     }
 
     // AB
-    pub fn mm(&mut self,
-              other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+    pub fn mm(&mut self, other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
         self.matmul(other, false, false)
     }
 
     // (A^T)B
-    pub fn dot(&mut self,
-               other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+    pub fn dot(&mut self, other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
         let mut result = self.matmul(other, true, false).unwrap();
-        result.flatten(result.rank() - 2, true).expect("Could not flatten for dot prod");
+        result
+            .flatten(result.rank() - 2, true)
+            .expect("Could not flatten for dot prod");
         Ok(result)
     }
 
     // A(B^T)
-    pub fn outer(&mut self,
-                 other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+    pub fn outer(&mut self, other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
         self.matmul(other, false, true)
     }
 
@@ -702,6 +729,14 @@ impl<'a, T: DType> Tensor<'a, T> {
 
     pub fn tan(self) -> Tensor<'a, f32> {
         TensorOps::new(TENSOR_THREADING).tan(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
+    }
+
+    pub fn exp(self) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).exp(self.cast_fp32())
+    }
+
+    pub fn pow(self, base: f32) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).pow(self.cast_fp32(), base)
     }
 }
 
@@ -754,7 +789,6 @@ impl<T: DType> Print for Tensor<'_, T> {
         println!("{:?}", self);
     }
 }
-
 
 #[derive(Debug)]
 pub struct TensorMismatchedShapeError;
