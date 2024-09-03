@@ -1,6 +1,8 @@
 pub mod tensor;
 pub mod utils;
 
+use utils::dtype::Complex32;
+
 use crate::tensor::Tensor;
 
 use std::f32::consts::PI;
@@ -41,7 +43,7 @@ pub fn tensor_tests() {
     let now = SystemTime::now();
 
     println!("Matched dim operation test...");
-    let _ = (tnsr + tnsr2); // don't print this out lol
+    let _ = tnsr + tnsr2; // don't print this out lol
     println!();
     println!("Scalar mult result...");
     (tnsr3 / 3.0.tnsr()).print();
@@ -53,7 +55,8 @@ pub fn tensor_tests() {
     (tnsr6.outer(tnsr7)).unwrap().print();
     println!();
     println!("Trig func test...");
-    tnsr5.sin().print();
+    tnsr5.clone().sin().print();
+    tnsr5.sin().asin().print();
     println!();
     println!("Matmul test...");
     let mut result = tnsr8.mm(tnsr9.clone()).unwrap();
@@ -78,4 +81,11 @@ pub fn tensor_tests() {
     let elapsed = SystemTime::now().duration_since(now).unwrap();
     println!();
     println!("Finished | elapsed time: {:.5?}", elapsed);
+}
+
+pub fn dtypes_test() {
+    let c1 = Complex32::new(1., 5.);
+    let c2 = Complex32::new(3., 4.);
+    println!("{:?}", c1 * c2);
+    println!("{:?}", c1 * 5.);
 }

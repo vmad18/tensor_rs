@@ -297,4 +297,25 @@ impl TensorOps {
     pub fn pow<'a>(&self, a: Tensor<'a, f32>, b: f32) -> Tensor<'a, f32> {
         self._exp(a, b.tnsr())
     }
+
+    pub fn asin<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+            o[*i] = a[*i % step].asin()
+        };
+        self.publish_signal::<f32>(a, _b, sin_sig)
+    }
+
+    pub fn acos<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+            o[*i] = a[*i % step].acos()
+        };
+        self.publish_signal::<f32>(a, _b, sin_sig)
+    }
+
+    pub fn atan<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+            o[*i] = a[*i % step].atan()
+        };
+        self.publish_signal::<f32>(a, _b, sin_sig)
+    }
 }

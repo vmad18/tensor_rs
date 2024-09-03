@@ -738,6 +738,20 @@ impl<'a, T: DType> Tensor<'a, T> {
     pub fn pow(self, base: f32) -> Tensor<'a, f32> {
         TensorOps::new(TENSOR_THREADING).pow(self.cast_fp32(), base)
     }
+
+    pub fn asin(self) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).asin(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
+    }
+
+    pub fn acos(self) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).acos(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
+    }
+
+    pub fn atan(self) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).atan(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
+    }
+
+    // pub fn as_cmplx(self) -> Tensor<'a, f32> {}
 }
 
 impl<'a, T: DType> Add for Tensor<'a, T> {
