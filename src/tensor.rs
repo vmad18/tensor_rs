@@ -1,5 +1,5 @@
 use crate::utils::consts::TENSOR_THREADING;
-use crate::utils::dtype::DType;
+use crate::utils::dtype::{Complex32, DType};
 use crate::utils::ops::TensorOps;
 use crate::utils::{Print, ToSlice};
 use std::collections::HashMap;
@@ -751,7 +751,49 @@ impl<'a, T: DType> Tensor<'a, T> {
         TensorOps::new(TENSOR_THREADING).atan(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
     }
 
-    // pub fn as_cmplx(self) -> Tensor<'a, f32> {}
+    pub fn as_cmplx(self) -> Result<Tensor<'a, Complex32>, TensorMismatchedShapeError> {
+        if self.shape[self.rank() - 1] != 2 {
+            return Err(TensorMismatchedShapeError);
+        };
+
+        let mut o_shape = Vec::<usize>::new();
+
+        for i in 0..self.rank() - 1 {
+            o_shape.push(self.shape[i]);
+        }
+
+        o_shape.push(1);
+        // let agg = Tensor::<Complex32>::new_zeros(o_shape.as_slice());
+
+        let mut slice: Vec<(usize, usize)> = Vec::new();
+
+        for i in 0..self.rank() - 1 {
+            slice.push((0, self.shape[i]));
+        }
+
+        let mut real_slice = slice.clone();
+        let mut img_slice = slice.clone();
+        real_slice.push((0, 1));
+        img_slice.push((1, 2));
+
+        let real_slice = Slice::new(real_slice.as_slice());
+        let img_slice = Slice::new(img_slice.as_slice());
+
+        let real_data = self.get_slice(real_slice).unwrap().data;
+        let img_data = self.get_slice(img_slice).unwrap().data;
+
+        let mut agg: Vec<Complex32> = vec![];
+
+        for i in 0..real_data.len() {
+            agg.push(Complex32::new(
+                real_data[i].to_fp32(),
+                img_data[i].to_fp32(),
+            ));
+        }
+
+        let result = Tensor::<Complex32>::new(agg.as_slice(), o_shape.as_slice());
+        Ok(result)
+    }
 }
 
 impl<'a, T: DType> Add for Tensor<'a, T> {

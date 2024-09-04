@@ -1,3 +1,4 @@
+use core::fmt;
 use std::fmt::Debug;
 use std::ops::{Add, Div, Mul, Sub};
 
@@ -286,7 +287,7 @@ impl DType for Complex32 {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct Complex32 {
     r: f32,
     j: f32,
@@ -361,5 +362,11 @@ impl Div for Complex32 {
 
     fn div(self, other: Self) -> Self::Output {
         self * other.resp()
+    }
+}
+
+impl fmt::Debug for Complex32 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:.4}+j{:.4}", self.r, self.j)
     }
 }

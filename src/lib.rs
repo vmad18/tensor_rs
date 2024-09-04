@@ -40,6 +40,8 @@ pub fn tensor_tests() {
     let mut tnsr10 = Tensor::<f32>::new(&[-1., 0., 0., 1.], &[2, 2]);
     let tnsr11 = Tensor::<f32>::new_ones(&[2, 1]);
 
+    let tnsr12 = Tensor::<f32>::new(&[3., 4., 10., 11.], &[2, 2]);
+
     let now = SystemTime::now();
 
     println!("Matched dim operation test...");
@@ -77,6 +79,11 @@ pub fn tensor_tests() {
     println!();
     println!("Linear transformation test...");
     tnsr10.mm(tnsr11).unwrap().print();
+    println!();
+    println!("Tensor to complex test...");
+    let c_tnsr = tnsr12.as_cmplx().unwrap();
+    c_tnsr.print();
+    (c_tnsr.clone() * c_tnsr).print();
 
     let elapsed = SystemTime::now().duration_since(now).unwrap();
     println!();

@@ -5,6 +5,6 @@ use tensor::{dtypes_test, tensor_tests};
 
 fn main() {
     tensor_tests();
-    println!();
-    dtypes_test();
+    // println!();
+    // dtypes_test();
 }
