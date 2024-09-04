@@ -7,6 +7,8 @@ Create tensors of any shape and perform operations between them!
 * tenosr ops
 * cpu blocked parallelization
 * matmul
+* outer/inner prods
+* complex numbers
 
 # to-do
 * autograd
