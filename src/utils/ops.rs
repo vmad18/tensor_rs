@@ -16,6 +16,14 @@ pub struct TensorOps {
     pub thread_count: usize,
 }
 
+#[derive(Debug)]
+pub enum Operation {
+    Add,
+    Mul,
+    Div,
+    MatMul,
+}
+
 pub trait TensorOpsInit {
     fn tnsr_op(self) -> TensorOps;
 }

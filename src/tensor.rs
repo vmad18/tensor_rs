@@ -1,6 +1,6 @@
 use crate::utils::consts::TENSOR_THREADING;
 use crate::utils::dtype::{Complex32, DType};
-use crate::utils::ops::TensorOps;
+use crate::utils::ops::{Operation, TensorOps};
 use crate::utils::{Print, ToSlice};
 use std::collections::HashMap;
 use std::fmt;
@@ -16,6 +16,8 @@ pub struct Tensor<'a, T: DType> {
     pub strides: Vec<usize>,
     pub children: Option<Vec<&'a Tensor<'a, T>>>,
     pub parents: Option<Vec<&'a Tensor<'a, T>>>,
+    pub grad: bool,
+    prev_op: (Option<Operation>, &'a Tensor<'a, T>),
 }
 
 //TODO unsqueeze method
@@ -38,6 +40,28 @@ impl<'a, T: DType> Tensor<'a, T> {
             strides,
             children: None,
             parents: None,
+            grad: true,
+        }
+    }
+
+    pub fn new_no_grad(data: &[T], shape: &[usize]) -> Self {
+        let data = data.to_vec();
+        let shape = shape.to_vec();
+
+        assert_eq!(
+            Tensor::<T>::num_elm(&shape),
+            data.len(),
+            "Tensor has mismatched shape and elements!"
+        );
+
+        let strides = Tensor::<T>::comp_strides(&shape);
+        Tensor {
+            data,
+            shape,
+            strides,
+            children: None,
+            parents: None,
+            grad: false,
         }
     }
 

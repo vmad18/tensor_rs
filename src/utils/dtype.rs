@@ -353,7 +353,7 @@ impl Sub for Complex32 {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self::Output {
-        self + other.s_mul(-1)
+        self + (other * -1.)
     }
 }
 
