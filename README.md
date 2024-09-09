@@ -1,6 +1,6 @@
 # tensor_rs (w.i.p)
 
-Create tensors of any shape and perform operations between them!
+create tensors of any dimension and perform operations between them!
 
 # done
 * tensors
@@ -8,7 +8,7 @@ Create tensors of any shape and perform operations between them!
 * cpu blocked parallelization
 * matmul
 * outer/inner prods
-* elementary math operations/functions
+* elementary math functions
 * complex numbers
 
 # to-do
