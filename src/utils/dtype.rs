@@ -298,7 +298,7 @@ impl Complex32 {
         Complex32 { r, j }
     }
 
-    pub fn euler_ang(m: f32, theta: f32) -> Self {
+    pub fn euler(m: f32, theta: f32) -> Self {
         Complex32 {
             r: m * theta.cos(),
             j: m * theta.sin(),

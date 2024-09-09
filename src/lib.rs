@@ -72,7 +72,7 @@ pub fn tensor_tests() {
     result.sum(0, false, false).unwrap().unwrap().print();
     println!();
     println!("Tensor power test...");
-    tnsr4.clone().pow(3.0).print();
+    tnsr4.clone().pow(3.0.tnsr()).print();
     println!();
     println!("Tensor exp test...");
     tnsr4.exp().print();
@@ -95,4 +95,20 @@ pub fn dtypes_test() {
     let c2 = Complex32::new(3., 4.);
     println!("{:?}", c1 * c2);
     println!("{:?}", c1 * 5.);
+}
+
+pub fn grad_test() {
+    let a = Tensor::new_grad(&[2, 3, 5, 7], &[2, 2]);
+    let b = Tensor::new_grad(&[6, 2, 1, 9], &[2, 2]);
+    // println!("{}", a.requires_grad());
+    let mut c = a.add(&b);
+    let d = a.add(&c);
+
+    // c.print();
+    // println!();
+    // d.print();
+
+    c.flatten(0, true);
+    // c.sum(0, true, true);
+    c.print();
 }
