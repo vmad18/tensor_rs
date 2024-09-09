@@ -8,6 +8,7 @@ Create tensors of any shape and perform operations between them!
 * cpu blocked parallelization
 * matmul
 * outer/inner prods
+* elementary math operations/functions
 * complex numbers
 
 # to-do
