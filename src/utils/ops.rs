@@ -1,12 +1,12 @@
 use std::cell::UnsafeCell;
 use std::fmt::Debug;
-use std::ops::{Add, Deref, DerefMut, Div, Mul, Sub};
+use std::ops::{Deref, DerefMut};
 use std::thread;
 use std::thread::JoinHandle;
 
 use crate::tensor::Tensor;
 use crate::utils::dtype::DType;
-use crate::utils::{Print, ToRc, ToTensor};
+use crate::utils::{Print, ToRc};
 use std::f32::consts::E;
 
 #[derive(Debug)]
@@ -21,7 +21,56 @@ pub enum Operation {
     Add,
     Mul,
     Div,
+    Sin,
+    Cos,
+    Tan,
+    ASin,
+    ACos,
+    ATan,
+    Exp,
+    Pow,
     MatMul,
+}
+
+pub trait Function<T: DType> {
+    fn func(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32>;
+    fn call(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32>;
+}
+
+pub struct relu;
+pub struct gelu;
+pub struct silu;
+pub struct sigmoid;
+
+impl<T: DType> Function<T> for sigmoid {
+    fn func(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
+        1.0.tnsr() / (1.0.tnsr() + ((-1.0).tnsr() * t.cast_fp32()).exp())
+    }
+
+    fn call(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
+        self.func(t, dim)
+    }
+}
+
+impl<T: DType> Function<T> for relu {
+    fn func(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
+        let mask = t.greater(&T::zero().tnsr());
+        (t * mask).cast_fp32()
+    }
+
+    fn call(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
+        self.func(t, dim)
+    }
+}
+
+impl<T: DType> Function<T> for silu {
+    fn func(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
+        sigmoid.call(t.clone(), None) * t.cast_fp32()
+    }
+
+    fn call(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
+        self.func(t, dim)
+    }
 }
 
 pub trait TensorOpsInit {
@@ -277,17 +326,17 @@ impl TensorOps {
     }
 
     pub fn cos(&self, a: Tensor<f32>, _b: Tensor<f32>) -> Tensor<f32> {
-        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+        let cos_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
             o[*i] = a[*i % step].cos()
         };
-        self.publish_signal::<f32>(a, _b, sin_sig)
+        self.publish_signal::<f32>(a, _b, cos_sig)
     }
 
     pub fn tan(&self, a: Tensor<f32>, _b: Tensor<f32>) -> Tensor<f32> {
-        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+        let tan_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
             o[*i] = a[*i % step].tan()
         };
-        self.publish_signal::<f32>(a, _b, sin_sig)
+        self.publish_signal::<f32>(a, _b, tan_sig)
     }
 
     fn _exp(&self, a: Tensor<f32>, b: Tensor<f32>) -> Tensor<f32> {
@@ -307,23 +356,41 @@ impl TensorOps {
     }
 
     pub fn asin(&self, a: Tensor<f32>, _b: Tensor<f32>) -> Tensor<f32> {
-        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+        let asin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
             o[*i] = a[*i % step].asin()
         };
-        self.publish_signal::<f32>(a, _b, sin_sig)
+        self.publish_signal::<f32>(a, _b, asin_sig)
     }
 
     pub fn acos(&self, a: Tensor<f32>, _b: Tensor<f32>) -> Tensor<f32> {
-        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+        let acos_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
             o[*i] = a[*i % step].acos()
         };
-        self.publish_signal::<f32>(a, _b, sin_sig)
+        self.publish_signal::<f32>(a, _b, acos_sig)
     }
 
     pub fn atan(&self, a: Tensor<f32>, _b: Tensor<f32>) -> Tensor<f32> {
-        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+        let atan_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
             o[*i] = a[*i % step].atan()
         };
-        self.publish_signal::<f32>(a, _b, sin_sig)
+        self.publish_signal::<f32>(a, _b, atan_sig)
+    }
+
+    pub fn cmp_greater<T: DType>(&self, a: Tensor<T>, b: Tensor<T>) -> Tensor<T> {
+        let cmp_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
+            let r = a[*i % step] > b[*i % step];
+            o[*i] = if r { T::one() } else { T::zero() };
+        };
+
+        self.publish_signal::<T>(a, b, cmp_sig)
+    }
+
+    pub fn cmp_equals<T: DType>(&self, a: Tensor<T>, b: Tensor<T>) -> Tensor<T> {
+        let cmp_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
+            let r = a[*i % step] == b[*i % step];
+            o[*i] = if r { T::one() } else { T::zero() };
+        };
+
+        self.publish_signal::<T>(a, b, cmp_sig)
     }
 }

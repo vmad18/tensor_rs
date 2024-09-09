@@ -1,7 +1,7 @@
 use crate::utils::consts::TENSOR_THREADING;
 use crate::utils::dtype::{Complex32, DType};
 use crate::utils::ops::{Operation, TensorOps};
-use crate::utils::{Print, ToRc, ToSlice, ToTensor};
+use crate::utils::{Print, ToRc, ToSlice};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -798,6 +798,21 @@ impl<T: DType> Tensor<T> {
 
     pub fn atan(self) -> Tensor<f32> {
         TensorOps::new(TENSOR_THREADING).atan(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
+    }
+
+    pub fn greater(&self, other: &Tensor<T>) -> Tensor<T> {
+        let r = TensorOps::new(TENSOR_THREADING).cmp_greater(self.clone(), other.clone());
+        r
+    }
+
+    pub fn less(&self, other: &Tensor<T>) -> Tensor<T> {
+        let r = TensorOps::new(TENSOR_THREADING).cmp_greater(other.clone(), self.clone());
+        r
+    }
+
+    pub fn equals(&self, other: &Tensor<T>) -> Tensor<T> {
+        let r = TensorOps::new(TENSOR_THREADING).cmp_equals(self.clone(), other.clone());
+        r
     }
 
     pub fn as_cmplx(self) -> Result<Tensor<Complex32>, TensorMismatchedShapeError> {
