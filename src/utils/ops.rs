@@ -1,15 +1,13 @@
 use std::cell::UnsafeCell;
 use std::fmt::Debug;
-use std::ops::{Deref, DerefMut};
+use std::ops::{Add, Deref, DerefMut, Div, Mul, Sub};
 use std::thread;
 use std::thread::JoinHandle;
 
 use crate::tensor::Tensor;
-use crate::utils::consts::_e;
 use crate::utils::dtype::DType;
-use crate::utils::{Print, ToRc};
-
-// use std::f32::consts::E;
+use crate::utils::{Print, ToTensor};
+use std::f32::consts::E;
 
 #[derive(Debug)]
 pub struct TensorOps {
@@ -21,61 +19,9 @@ pub struct TensorOps {
 #[derive(Debug)]
 pub enum Operation {
     Add,
-    Sub,
     Mul,
     Div,
-    Sin,
-    Cos,
-    Tan,
-    ASin,
-    ACos,
-    ATan,
-    Greater,
-    Exp,
-    Pow,
     MatMul,
-}
-
-pub trait Function<T: DType> {
-    fn func(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32>;
-    fn call(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32>;
-}
-
-pub struct relu;
-pub struct gelu;
-pub struct silu;
-pub struct sigmoid;
-
-impl<T: DType> Function<T> for sigmoid {
-    fn func(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
-        1.0.tnsr()
-            .div(&1.0.tnsr().add(&((-1.0).tnsr().mul(&t.cast_fp32()).exp())))
-    }
-
-    fn call(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
-        self.func(t, dim)
-    }
-}
-
-impl<T: DType> Function<T> for relu {
-    fn func(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
-        let mask = t.greater(&T::zero().tnsr());
-        (t * mask).cast_fp32()
-    }
-
-    fn call(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
-        self.func(t, dim)
-    }
-}
-
-impl<T: DType> Function<T> for silu {
-    fn func(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
-        sigmoid.call(t.clone(), None) * t.cast_fp32()
-    }
-
-    fn call(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
-        self.func(t, dim)
-    }
 }
 
 pub trait TensorOpsInit {
@@ -160,12 +106,12 @@ impl TensorOps {
         }
     }
 
-    pub fn match_tnsrs<T: DType>(
+    pub fn match_tnsrs<'a, T: DType>(
         &self,
-        a: Tensor<T>,
-        b: Tensor<T>,
+        a: Tensor<'a, T>,
+        b: Tensor<'a, T>,
         ignore_dim: Option<usize>,
-    ) -> (Tensor<T>, Tensor<T>, Vec<usize>) {
+    ) -> (Tensor<'a, T>, Tensor<'a, T>, Vec<usize>) {
         if a.rank() == b.rank() {
             let mut j = 0;
             for i in 0..a.rank() {
@@ -196,17 +142,17 @@ impl TensorOps {
         (larger, smaller, out_shape)
     }
 
-    fn pad<T: DType>(a: &mut Vec<T>, num: &usize) {
+    fn pad<'a, T: DType>(a: &mut Vec<T>, num: &usize) {
         let pad = vec![T::zero(); *num];
         a.extend(pad);
     }
 
-    fn blck_compute_op<T: DType>(
+    fn blck_compute_op<'a, T: DType>(
         &self,
-        a: Tensor<T>,
-        b: Tensor<T>,
+        a: Tensor<'a, T>,
+        b: Tensor<'a, T>,
         op: fn(&usize, &usize, &Vec<T>, &Vec<T>, &mut Vec<T>),
-    ) -> Tensor<T> {
+    ) -> Tensor<'a, T> {
         let BLCK_SIZE = (a.num_elms() / self.thread_count).max(1);
 
         let (a, b, shape) = self.match_tnsrs(a, b, None);
@@ -262,12 +208,12 @@ impl TensorOps {
         Tensor::<T>::new(final_out.as_slice(), shape.as_slice())
     }
 
-    fn compute_op<T: DType>(
+    fn compute_op<'a, T: DType>(
         &self,
-        a: Tensor<T>,
-        b: Tensor<T>,
+        a: Tensor<'a, T>,
+        b: Tensor<'a, T>,
         op: fn(&usize, &usize, &Vec<T>, &Vec<T>, &mut Vec<T>),
-    ) -> Tensor<T> {
+    ) -> Tensor<'a, T> {
         let (a, b, shape) = self.match_tnsrs(a, b, None);
 
         let a_m = a.clone().data;
@@ -282,12 +228,12 @@ impl TensorOps {
         Tensor::new(output.as_slice(), shape.as_slice())
     }
 
-    pub fn publish_signal<T: DType>(
+    pub fn publish_signal<'a, T: DType>(
         &self,
-        a: Tensor<T>,
-        b: Tensor<T>,
+        a: Tensor<'a, T>,
+        b: Tensor<'a, T>,
         sig: fn(&usize, &usize, &Vec<T>, &Vec<T>, &mut Vec<T>),
-    ) -> Tensor<T> {
+    ) -> Tensor<'a, T> {
         if self.threaded {
             self.blck_compute_op(a, b, sig)
         } else {
@@ -295,107 +241,89 @@ impl TensorOps {
         }
     }
 
-    pub fn add<T: DType>(&self, a: Tensor<T>, b: Tensor<T>) -> Tensor<T> {
+    pub fn add<'a, T: DType>(&self, a: Tensor<'a, T>, b: Tensor<'a, T>) -> Tensor<'a, T> {
         let add_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
             o[*i] = a[*i % step] + b[*i % step]
         };
         self.publish_signal(a, b, add_sig)
     }
 
-    pub fn sub<T: DType>(&self, a: Tensor<T>, b: Tensor<T>) -> Tensor<T> {
+    pub fn sub<'a, T: DType>(&self, a: Tensor<'a, T>, b: Tensor<'a, T>) -> Tensor<'a, T> {
         let add_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
             o[*i] = a[*i % step] - b[*i % step]
         };
         self.publish_signal(a, b, add_sig)
     }
 
-    pub fn mul<T: DType>(&self, a: Tensor<T>, b: Tensor<T>) -> Tensor<T> {
+    pub fn mul<'a, T: DType>(&self, a: Tensor<'a, T>, b: Tensor<'a, T>) -> Tensor<'a, T> {
         let mul_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
             o[*i] = a[*i % step] * b[*i % step]
         };
         self.publish_signal(a, b, mul_sig)
     }
 
-    pub fn div<T: DType>(&self, a: Tensor<T>, b: Tensor<T>) -> Tensor<T> {
+    pub fn div<'a, T: DType>(&self, a: Tensor<'a, T>, b: Tensor<'a, T>) -> Tensor<'a, T> {
         let mul_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
             o[*i] = a[*i % step] / b[*i % step]
         };
         self.publish_signal(a, b, mul_sig)
     }
 
-    pub fn sin(&self, a: Tensor<f32>, _b: Tensor<f32>) -> Tensor<f32> {
+    pub fn sin<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
         let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
             o[*i] = a[*i % step].sin()
         };
         self.publish_signal::<f32>(a, _b, sin_sig)
     }
 
-    pub fn cos(&self, a: Tensor<f32>, _b: Tensor<f32>) -> Tensor<f32> {
-        let cos_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+    pub fn cos<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
             o[*i] = a[*i % step].cos()
         };
-        self.publish_signal::<f32>(a, _b, cos_sig)
+        self.publish_signal::<f32>(a, _b, sin_sig)
     }
 
-    pub fn tan(&self, a: Tensor<f32>, _b: Tensor<f32>) -> Tensor<f32> {
-        let tan_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+    pub fn tan<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
             o[*i] = a[*i % step].tan()
         };
-        self.publish_signal::<f32>(a, _b, tan_sig)
+        self.publish_signal::<f32>(a, _b, sin_sig)
     }
 
-    fn _exp(&self, a: Tensor<f32>, b: Tensor<f32>) -> Tensor<f32> {
+    fn _exp<'a>(&self, a: Tensor<'a, f32>, b: Tensor<'a, f32>) -> Tensor<'a, f32> {
         let exp_sig = |i: &usize, step: &usize, a: &Vec<f32>, b: &Vec<f32>, o: &mut Vec<f32>| {
-            o[*i] = (a[*i % step] * b[*i % step].ln()).exp();
+            o[*i] = (a[*i % step] * b[0].ln()).exp();
         };
         self.publish_signal(a, b, exp_sig)
     }
 
-    pub fn exp(&self, a: Tensor<f32>) -> Tensor<f32> {
-        let b: Tensor<f32> = _e.tnsr();
+    pub fn exp<'a>(&self, a: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let b: Tensor<f32> = E.tnsr();
         self._exp(a, b)
     }
 
-    pub fn pow(&self, a: Tensor<f32>, b: Tensor<f32>) -> Tensor<f32> {
-        self._exp(a, b)
+    pub fn pow<'a>(&self, a: Tensor<'a, f32>, b: f32) -> Tensor<'a, f32> {
+        self._exp(a, b.tnsr())
     }
 
-    pub fn asin(&self, a: Tensor<f32>, _b: Tensor<f32>) -> Tensor<f32> {
-        let asin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+    pub fn asin<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
             o[*i] = a[*i % step].asin()
         };
-        self.publish_signal::<f32>(a, _b, asin_sig)
+        self.publish_signal::<f32>(a, _b, sin_sig)
     }
 
-    pub fn acos(&self, a: Tensor<f32>, _b: Tensor<f32>) -> Tensor<f32> {
-        let acos_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+    pub fn acos<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
             o[*i] = a[*i % step].acos()
         };
-        self.publish_signal::<f32>(a, _b, acos_sig)
+        self.publish_signal::<f32>(a, _b, sin_sig)
     }
 
-    pub fn atan(&self, a: Tensor<f32>, _b: Tensor<f32>) -> Tensor<f32> {
-        let atan_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
+    pub fn atan<'a>(&self, a: Tensor<'a, f32>, _b: Tensor<'a, f32>) -> Tensor<'a, f32> {
+        let sin_sig = |i: &usize, step: &usize, a: &Vec<f32>, _b: &Vec<f32>, o: &mut Vec<f32>| {
             o[*i] = a[*i % step].atan()
         };
-        self.publish_signal::<f32>(a, _b, atan_sig)
-    }
-
-    pub fn cmp_greater<T: DType>(&self, a: Tensor<T>, b: Tensor<T>) -> Tensor<T> {
-        let cmp_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
-            let r = a[*i % step] > b[*i % step];
-            o[*i] = if r { T::one() } else { T::zero() };
-        };
-
-        self.publish_signal::<T>(a, b, cmp_sig)
-    }
-
-    pub fn cmp_equals<T: DType>(&self, a: Tensor<T>, b: Tensor<T>) -> Tensor<T> {
-        let cmp_sig = |i: &usize, step: &usize, a: &Vec<T>, b: &Vec<T>, o: &mut Vec<T>| {
-            let r = a[*i % step] == b[*i % step];
-            o[*i] = if r { T::one() } else { T::zero() };
-        };
-
-        self.publish_signal::<T>(a, b, cmp_sig)
+        self.publish_signal::<f32>(a, _b, sin_sig)
     }
 }

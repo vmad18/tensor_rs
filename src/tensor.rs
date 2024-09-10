@@ -1,28 +1,27 @@
-use crate::utils::consts::_e;
 use crate::utils::consts::TENSOR_THREADING;
 use crate::utils::dtype::{Complex32, DType};
 use crate::utils::ops::{Operation, TensorOps};
-use crate::utils::{Print, ToRc, ToSlice};
-use std::cell::RefCell;
+use crate::utils::{Print, ToSlice};
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Add, Div, Mul, Sub};
-use std::rc::Rc;
 
 // threading - T/F | auto - T/F | thread_count | usize
 
 #[derive(Debug)]
-pub struct Tensor<T: DType> {
+pub struct Tensor<'a, T: DType> {
     pub data: Vec<T>,
     pub shape: Vec<usize>,
     pub strides: Vec<usize>,
-    pub grad: Option<Rc<RefCell<Tensor<f32>>>>,
-    pub prev_op: Option<(Option<Operation>, Vec<Tensor<T>>)>,
+    pub children: Option<Vec<&'a Tensor<'a, T>>>,
+    pub parents: Option<Vec<&'a Tensor<'a, T>>>,
+    pub grad: bool,
+    prev_op: (Option<Operation>, &'a Tensor<'a, T>),
 }
 
 //TODO unsqueeze method
-impl<T: DType> Tensor<T> {
+impl<'a, T: DType> Tensor<'a, T> {
     // init tensor with data and shape tensor
     pub fn new(data: &[T], shape: &[usize]) -> Self {
         let data = data.to_vec();
@@ -39,13 +38,13 @@ impl<T: DType> Tensor<T> {
             data,
             shape,
             strides,
-            grad: None,
-            prev_op: None,
+            children: None,
+            parents: None,
+            grad: true,
         }
     }
 
-    // inits tensor w/ gradient
-    pub fn new_grad(data: &[T], shape: &[usize]) -> Self {
+    pub fn new_no_grad(data: &[T], shape: &[usize]) -> Self {
         let data = data.to_vec();
         let shape = shape.to_vec();
 
@@ -56,32 +55,14 @@ impl<T: DType> Tensor<T> {
         );
 
         let strides = Tensor::<T>::comp_strides(&shape);
-        let grad = Some(Rc::new(RefCell::new(Tensor::<f32>::new_zeros(
-            shape.as_slice(),
-        ))));
         Tensor {
             data,
             shape,
             strides,
-            grad,
-            prev_op: None,
+            children: None,
+            parents: None,
+            grad: false,
         }
-    }
-
-    // static init for 0 tensor of a shape
-    pub fn new_zeros(shape: &[usize]) -> Tensor<T> {
-        let elm = Tensor::<T>::num_elm(shape);
-        let data: Vec<T> = vec![T::zero(); elm];
-
-        Tensor::<T>::new(data.as_slice(), shape)
-    }
-
-    // static init for 1 tensor of a shape
-    pub fn new_ones(shape: &[usize]) -> Tensor<T> {
-        let elm = Tensor::<T>::num_elm(shape);
-        let data: Vec<T> = vec![T::one(); elm];
-
-        Tensor::<T>::new(data.as_slice(), shape)
     }
 
     // returns cls tensor's rank
@@ -115,12 +96,20 @@ impl<T: DType> Tensor<T> {
         true
     }
 
-    // returns true if tensor has a gradient
-    pub fn requires_grad(&self) -> bool {
-        if let Some(_) = &self.grad {
-            return true;
-        }
-        false
+    // static init for 0 tensor of a shape
+    pub fn new_zeros(shape: &[usize]) -> Tensor<'a, T> {
+        let elm = Tensor::<T>::num_elm(shape);
+        let data: Vec<T> = vec![T::zero(); elm];
+
+        Tensor::<T>::new(data.as_slice(), shape)
+    }
+
+    // static init for 1 tensor of a shape
+    pub fn new_ones(shape: &[usize]) -> Tensor<'a, T> {
+        let elm = Tensor::<T>::num_elm(shape);
+        let data: Vec<T> = vec![T::one(); elm];
+
+        Tensor::<T>::new(data.as_slice(), shape)
     }
 
     // static method to compute the strides based off tensor shape
@@ -423,7 +412,7 @@ impl<T: DType> Tensor<T> {
     // matches tensors across their axes
     pub fn match_dims(
         self,
-        other: Tensor<T>,
+        other: Tensor<'a, T>,
         ignore_after_dim: Option<usize>,
     ) -> Option<(Self, Tensor<T>, Vec<usize>, Vec<usize>, bool)> {
         let mut first_out = true;
@@ -562,7 +551,7 @@ impl<T: DType> Tensor<T> {
         dim: usize,
         keepdim: bool,
         inplace: bool,
-    ) -> Result<Option<Tensor<T>>, TensorMismatchedShapeError> {
+    ) -> Result<Option<Tensor<'a, T>>, TensorMismatchedShapeError> {
         if dim >= self.rank() {
             return Err(TensorMismatchedShapeError);
         }
@@ -636,22 +625,17 @@ impl<T: DType> Tensor<T> {
         Ok(self.reshape(out_dim.as_slice(), false))
     }
 
-    pub fn cast_fp32(self) -> Tensor<f32> {
+    pub fn cast_fp32(self) -> Tensor<'a, f32> {
         let data: Vec<f32> = self.data.iter().map(|x| x.to_fp32()).collect();
         let shape = self.shape;
-        let r_g = self.grad;
 
-        let mut r = Tensor::<f32>::new(data.as_slice(), shape.as_slice());
-        if let Some(grad) = r_g {
-            r.grad = Some(grad);
-        }
-        r
+        Tensor::<f32>::new(data.as_slice(), shape.as_slice())
     }
 
     // element ops
     fn matmul(
         &mut self,
-        mut other: Tensor<T>,
+        mut other: Tensor<'a, T>,
         transpose_inner: bool,
         transpose_outer: bool,
     ) -> Result<Tensor<T>, TensorMismatchedShapeError> {
@@ -741,12 +725,12 @@ impl<T: DType> Tensor<T> {
     }
 
     // AB
-    pub fn mm(&mut self, other: Tensor<T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+    pub fn mm(&mut self, other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
         self.matmul(other, false, false)
     }
 
     // (A^T)B
-    pub fn dot(&mut self, other: Tensor<T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+    pub fn dot(&mut self, other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
         let mut result = self.matmul(other, true, false).unwrap();
         result
             .flatten(result.rank() - 2, true)
@@ -755,148 +739,43 @@ impl<T: DType> Tensor<T> {
     }
 
     // A(B^T)
-    pub fn outer(&mut self, other: Tensor<T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
+    pub fn outer(&mut self, other: Tensor<'a, T>) -> Result<Tensor<T>, TensorMismatchedShapeError> {
         self.matmul(other, false, true)
     }
 
-    pub fn add(&self, other: &Tensor<T>) -> Tensor<T> {
-        let mut r = TensorOps::new(TENSOR_THREADING).add(self.clone(), other.clone());
-        if self.requires_grad() || other.requires_grad() {
-            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::Add), vec![self.clone(), other.clone()]));
-            // I really don't like having to clone these tensors
-        }
-        r
-    }
-
-    pub fn sub(&self, other: &Tensor<T>) -> Tensor<T> {
-        let mut r = TensorOps::new(TENSOR_THREADING).sub(self.clone(), other.clone());
-        if self.requires_grad() || other.requires_grad() {
-            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::Sub), vec![self.clone(), other.clone()]));
-            // I really don't like having to clone these tensors
-        }
-        r
-    }
-
-    pub fn mul(&self, other: &Tensor<T>) -> Tensor<T> {
-        let mut r = TensorOps::new(TENSOR_THREADING).mul(self.clone(), other.clone());
-        println!("HELLO1 {}", other.requires_grad());
-        if self.requires_grad() || other.requires_grad() {
-            println!("HELLO2");
-            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::Mul), vec![self.clone(), other.clone()]));
-            // I really don't like having to clone these tensors
-        }
-        r
-    }
-
-    pub fn div(&self, other: &Tensor<T>) -> Tensor<T> {
-        let mut r = TensorOps::new(TENSOR_THREADING).div(self.clone(), other.clone());
-        if self.requires_grad() || other.requires_grad() {
-            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::Add), vec![self.clone(), other.clone()]));
-            // I really don't like having to clone these tensors
-        }
-        r
-    }
-
-    pub fn sin(self) -> Tensor<f32> {
+    pub fn sin(self) -> Tensor<'a, f32> {
         TensorOps::new(TENSOR_THREADING).sin(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
     }
 
-    pub fn cos(self) -> Tensor<f32> {
+    pub fn cos(self) -> Tensor<'a, f32> {
         TensorOps::new(TENSOR_THREADING).cos(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
     }
 
-    pub fn tan(self) -> Tensor<f32> {
+    pub fn tan(self) -> Tensor<'a, f32> {
         TensorOps::new(TENSOR_THREADING).tan(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
     }
 
-    pub fn exp(&self) -> Tensor<f32> {
-        let mut r = TensorOps::new(TENSOR_THREADING).exp(self.clone().cast_fp32());
-        if self.requires_grad() {
-            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::Exp), vec![self.clone().cast_fp32()]));
-            // I really don't like having to clone these tensors
-        }
-        r
+    pub fn exp(self) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).exp(self.cast_fp32())
     }
 
-    pub fn pow(&self, expo: &Tensor<f32>) -> Tensor<f32> {
-        // let b = base.tnsr();
-        // let base = base.tnsr();
-        let (a, b, _shape) = TensorOps::new(TENSOR_THREADING).match_tnsrs(
-            self.clone().cast_fp32(),
-            expo.clone(),
-            None,
-        );
-
-        let mut r = TensorOps::new(TENSOR_THREADING).pow(b, a);
-        if self.requires_grad() {
-            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((
-                Some(Operation::Pow),
-                vec![self.clone().cast_fp32(), expo.clone()],
-            ));
-            // I really don't like having to clone these tensors
-        }
-
-        r
+    pub fn pow(self, base: f32) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).pow(self.cast_fp32(), base)
     }
 
-    pub fn asin(self) -> Tensor<f32> {
-        let mut r = TensorOps::new(TENSOR_THREADING)
-            .asin(self.clone().cast_fp32(), Tensor::<f32>::new(&[1.], &[1]));
-        if self.requires_grad() {
-            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::ASin), vec![self.clone().cast_fp32()]));
-            // I really don't like having to clone these tensors
-        }
-
-        r
+    pub fn asin(self) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).asin(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
     }
 
-    pub fn acos(&self) -> Tensor<f32> {
-        let mut r = TensorOps::new(TENSOR_THREADING)
-            .acos(self.clone().cast_fp32(), Tensor::<f32>::new(&[1.], &[1]));
-        if self.requires_grad() {
-            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::ACos), vec![self.clone().cast_fp32()]));
-            // I really don't like having to clone these tensors
-        }
-
-        r
+    pub fn acos(self) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).acos(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
     }
 
-    pub fn atan(self) -> Tensor<f32> {
-        let mut r = TensorOps::new(TENSOR_THREADING)
-            .atan(self.clone().cast_fp32(), Tensor::<f32>::new(&[1.], &[1]));
-        if self.requires_grad() {
-            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::ATan), vec![self.clone().cast_fp32()]));
-            // I really don't like having to clone these tensors
-        }
-
-        r
+    pub fn atan(self) -> Tensor<'a, f32> {
+        TensorOps::new(TENSOR_THREADING).atan(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
     }
 
-    pub fn greater(&self, other: &Tensor<T>) -> Tensor<T> {
-        let r = TensorOps::new(TENSOR_THREADING).cmp_greater(self.clone(), other.clone());
-        r
-    }
-
-    pub fn less(&self, other: &Tensor<T>) -> Tensor<T> {
-        let r = TensorOps::new(TENSOR_THREADING).cmp_greater(other.clone(), self.clone());
-        r
-    }
-
-    pub fn equals(&self, other: &Tensor<T>) -> Tensor<T> {
-        let r = TensorOps::new(TENSOR_THREADING).cmp_equals(self.clone(), other.clone());
-        r
-    }
-
-    pub fn as_cmplx(self) -> Result<Tensor<Complex32>, TensorMismatchedShapeError> {
+    pub fn as_cmplx(self) -> Result<Tensor<'a, Complex32>, TensorMismatchedShapeError> {
         if self.shape[self.rank() - 1] != 2 {
             return Err(TensorMismatchedShapeError);
         };
@@ -939,11 +818,9 @@ impl<T: DType> Tensor<T> {
         let result = Tensor::<Complex32>::new(agg.as_slice(), o_shape.as_slice());
         Ok(result)
     }
-
-    pub fn cmp_grad(&self) {}
 }
 
-impl<T: DType> Add for Tensor<T> {
+impl<'a, T: DType> Add for Tensor<'a, T> {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
@@ -951,7 +828,7 @@ impl<T: DType> Add for Tensor<T> {
     }
 }
 
-impl<T: DType> Mul for Tensor<T> {
+impl<'a, T: DType> Mul for Tensor<'a, T> {
     type Output = Self;
 
     fn mul(self, other: Self) -> Self {
@@ -959,7 +836,7 @@ impl<T: DType> Mul for Tensor<T> {
     }
 }
 
-impl<T: DType> Div for Tensor<T> {
+impl<'a, T: DType> Div for Tensor<'a, T> {
     type Output = Self;
 
     fn div(self, other: Self) -> Self {
@@ -967,7 +844,7 @@ impl<T: DType> Div for Tensor<T> {
     }
 }
 
-impl<T: DType> Sub for Tensor<T> {
+impl<'a, T: DType> Sub for Tensor<'a, T> {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self {
@@ -975,23 +852,19 @@ impl<T: DType> Sub for Tensor<T> {
     }
 }
 
-impl<T: DType> Clone for Tensor<T> {
+impl<'a, T: DType> Clone for Tensor<'a, T> {
     fn clone(&self) -> Self {
-        let mut r = Tensor::new(self.data.clone().as_slice(), self.shape.clone().as_slice());
-        if self.requires_grad() {
-            r.grad = self.grad.clone();
-        }
-        r
+        Tensor::new(self.data.clone().as_slice(), self.shape.clone().as_slice())
     }
 }
 
-impl<T: DType> fmt::Display for Tensor<T> {
+impl<T: DType> fmt::Display for Tensor<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.data)
     }
 }
 
-impl<T: DType> Print for Tensor<T> {
+impl<T: DType> Print for Tensor<'_, T> {
     fn print(&self) {
         println!("{:?}", self);
     }
