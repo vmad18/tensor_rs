@@ -5,9 +5,11 @@ use std::thread;
 use std::thread::JoinHandle;
 
 use crate::tensor::Tensor;
+use crate::utils::consts::_e;
 use crate::utils::dtype::DType;
 use crate::utils::{Print, ToRc};
-use std::f32::consts::E;
+
+// use std::f32::consts::E;
 
 #[derive(Debug)]
 pub struct TensorOps {
@@ -19,6 +21,7 @@ pub struct TensorOps {
 #[derive(Debug)]
 pub enum Operation {
     Add,
+    Sub,
     Mul,
     Div,
     Sin,
@@ -27,6 +30,7 @@ pub enum Operation {
     ASin,
     ACos,
     ATan,
+    Greater,
     Exp,
     Pow,
     MatMul,
@@ -44,7 +48,8 @@ pub struct sigmoid;
 
 impl<T: DType> Function<T> for sigmoid {
     fn func(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
-        1.0.tnsr() / (1.0.tnsr() + ((-1.0).tnsr() * t.cast_fp32()).exp())
+        1.0.tnsr()
+            .div(&1.0.tnsr().add(&((-1.0).tnsr().mul(&t.cast_fp32()).exp())))
     }
 
     fn call(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
@@ -347,7 +352,7 @@ impl TensorOps {
     }
 
     pub fn exp(&self, a: Tensor<f32>) -> Tensor<f32> {
-        let b: Tensor<f32> = E.tnsr();
+        let b: Tensor<f32> = _e.tnsr();
         self._exp(a, b)
     }
 

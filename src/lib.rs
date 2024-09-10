@@ -76,7 +76,7 @@ pub fn tensor_tests() {
     result.sum(0, false, false).unwrap().unwrap().print();
     println!();
     println!("Tensor power test...");
-    tnsr4.clone().pow(3.0_f32.tnsr()).print();
+    tnsr4.clone().pow(&3.0_f32.tnsr()).print();
     println!();
     println!("Tensor exp test...");
     tnsr4.exp().print();
@@ -102,8 +102,11 @@ pub fn dtypes_test() {
 }
 
 pub fn ops_test() {
-    let t1 = Tensor::<f32>::new(&[1., -3., 4., -5.], &[2, 2]);
-    sigmoid.call(t1.clone(), None).print();
+    let t1 = Tensor::<f32>::new_grad(&[1., -3., 4., -5.], &[2, 2]);
+    t1.print();
+    let s_t1 = sigmoid.call(t1.clone(), None);
+    s_t1.print();
+    // println!("{}", s_t1);
     println!();
     relu.call(t1.clone(), None).print();
 }
