@@ -1,14 +1,18 @@
 pub mod tensor;
 pub mod utils;
 
-use utils::dtype::Complex32;
+use utils::{
+    dtype::Complex32,
+    ops::{relu, sigmoid, Function},
+};
 
 use crate::tensor::Tensor;
+use crate::utils::dtype::DType;
 
 use std::f32::consts::PI;
 use std::time::SystemTime;
 
-use crate::utils::{Print, ToTensor};
+use crate::utils::Print;
 
 pub fn tensor_tests() {
     let shape = vec![128, 128, 64];
@@ -72,7 +76,7 @@ pub fn tensor_tests() {
     result.sum(0, false, false).unwrap().unwrap().print();
     println!();
     println!("Tensor power test...");
-    tnsr4.clone().pow(3.0).print();
+    tnsr4.clone().pow(&3.0_f32.tnsr()).print();
     println!();
     println!("Tensor exp test...");
     tnsr4.exp().print();
@@ -95,4 +99,30 @@ pub fn dtypes_test() {
     let c2 = Complex32::new(3., 4.);
     println!("{:?}", c1 * c2);
     println!("{:?}", c1 * 5.);
+}
+
+pub fn ops_test() {
+    let t1 = Tensor::<f32>::new_grad(&[1., -3., 4., -5.], &[2, 2]);
+    t1.print();
+    let s_t1 = sigmoid.call(t1.clone(), None);
+    s_t1.print();
+    // println!("{}", s_t1);
+    // println!();
+    // relu.call(t1.clone(), None).print();
+}
+
+pub fn grad_test() {
+    let a = Tensor::new_grad(&[2, 3, 5, 7], &[2, 2]);
+    let b = Tensor::new_grad(&[6, 2, 1, 9], &[2, 2]);
+    // println!("{}", a.requires_grad());
+    let mut c = a.add(&b);
+    let d = a.add(&c);
+
+    // c.print();
+    // println!();
+    // d.print();
+
+    c.flatten(0, true);
+    // c.sum(0, true, true);
+    c.print();
 }

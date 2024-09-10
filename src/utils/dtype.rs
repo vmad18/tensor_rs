@@ -1,4 +1,6 @@
+use crate::Tensor;
 use core::fmt;
+use std::cmp::PartialOrd;
 use std::fmt::Debug;
 use std::ops::{Add, Div, Mul, Sub};
 
@@ -15,6 +17,7 @@ pub trait DType:
     + Sub<Output = Self>
     + Mul<Output = Self>
     + Div<Output = Self>
+    + PartialOrd
 {
     fn zero() -> Self;
     fn one() -> Self;
@@ -23,6 +26,7 @@ pub trait DType:
     fn tan(self) -> f32;
     fn to_fp32(self) -> f32;
     fn to_fp64(self) -> f64;
+    fn tnsr(self) -> Tensor<Self>;
     fn to_cmplx(self) -> Complex32;
 }
 
@@ -53,6 +57,10 @@ impl DType for u8 {
 
     fn to_fp64(self) -> f64 {
         self as f64
+    }
+
+    fn tnsr(self) -> Tensor<Self> {
+        Tensor::new(&[self], &[1])
     }
 
     fn to_cmplx(self) -> Complex32 {
@@ -88,6 +96,10 @@ impl DType for i8 {
         self as f64
     }
 
+    fn tnsr(self) -> Tensor<Self> {
+        Tensor::new(&[self], &[1])
+    }
+
     fn to_cmplx(self) -> Complex32 {
         Complex32::new(self.to_fp32(), 0.)
     }
@@ -118,6 +130,10 @@ impl DType for i32 {
 
     fn to_fp64(self) -> f64 {
         self as f64
+    }
+
+    fn tnsr(self) -> Tensor<Self> {
+        Tensor::new(&[self], &[1])
     }
 
     fn to_cmplx(self) -> Complex32 {
@@ -152,6 +168,10 @@ impl DType for i64 {
         self as f64
     }
 
+    fn tnsr(self) -> Tensor<Self> {
+        Tensor::new(&[self], &[1])
+    }
+
     fn to_cmplx(self) -> Complex32 {
         Complex32::new(self.to_fp32(), 0.)
     }
@@ -182,6 +202,10 @@ impl DType for usize {
 
     fn to_fp64(self) -> f64 {
         self as f64
+    }
+
+    fn tnsr(self) -> Tensor<Self> {
+        Tensor::new(&[self], &[1])
     }
 
     fn to_cmplx(self) -> Complex32 {
@@ -216,6 +240,10 @@ impl DType for f32 {
         self as f64
     }
 
+    fn tnsr(self) -> Tensor<Self> {
+        Tensor::new(&[self], &[1])
+    }
+
     fn to_cmplx(self) -> Complex32 {
         Complex32::new(self, 0.)
     }
@@ -246,6 +274,10 @@ impl DType for f64 {
 
     fn to_fp64(self) -> f64 {
         self
+    }
+
+    fn tnsr(self) -> Tensor<Self> {
+        Tensor::new(&[self], &[1])
     }
 
     fn to_cmplx(self) -> Complex32 {
@@ -282,12 +314,16 @@ impl DType for Complex32 {
         self.mag() as f64
     }
 
+    fn tnsr(self) -> Tensor<Self> {
+        Tensor::new(&[self], &[1])
+    }
+
     fn to_cmplx(self) -> Complex32 {
         Complex32::new(self.to_fp32(), 0.)
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialOrd, PartialEq)]
 pub struct Complex32 {
     r: f32,
     j: f32,
@@ -298,7 +334,7 @@ impl Complex32 {
         Complex32 { r, j }
     }
 
-    pub fn euler_ang(m: f32, theta: f32) -> Self {
+    pub fn euler(m: f32, theta: f32) -> Self {
         Complex32 {
             r: m * theta.cos(),
             j: m * theta.sin(),
@@ -364,6 +400,12 @@ impl Div for Complex32 {
         self * other.resp()
     }
 }
+
+// impl PartialOrd for Complex32 {
+//     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+//         Some(self.mag().cmp(other.mag()))
+//     }
+// }
 
 impl fmt::Debug for Complex32 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
