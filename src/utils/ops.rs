@@ -34,6 +34,7 @@ pub enum Operation {
     Exp,
     Pow,
     MatMul,
+    Reshape,
 }
 
 pub trait Function<T: DType> {

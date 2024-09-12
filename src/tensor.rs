@@ -3,8 +3,12 @@ use crate::utils::consts::TENSOR_THREADING;
 use crate::utils::dtype::{Complex32, DType};
 use crate::utils::ops::{Operation, TensorOps};
 use crate::utils::{Print, ToRc, ToSlice};
+use core::slice::SlicePattern;
+use std::borrow::Borrow;
+use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::LinkedList;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Add, Div, Mul, Sub};
@@ -980,7 +984,49 @@ impl<T: DType> Tensor<T> {
         Ok(result)
     }
 
-    pub fn cmp_grad(&self) {}
+    pub fn cmp_grad(&self) -> Result<Tensor<T>, TensorNoGradError> {
+        if !self.requires_grad() {
+            return Err(TensorNoGradError);
+        }
+
+        let prev_op = self.prev_op;
+
+        if let Some(po) = prev_op {
+            let operation = po.0;
+            let tnsrs: Vec<Rc<RefCell<Tensor<f32>>>> = po.1;
+
+            if let Some(op) = operation {
+                match op {
+                    Operation::Add => {
+                        let x = tnsrs.get(0).unwrap().borrow_mut();
+                        let y = tnsrs.get(1).unwrap().borrow_mut();
+                        if x.requires_grad() {
+                            x.grad
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Tensor::new_ones(self.shape.as_slice()))
+
+        // let mut queue = LinkedList::<&Tensor<T>>::new();
+        //
+        // queue.push_front(&self);
+        //
+        // while !queue.is_empty() {
+        //     let curr_tnsr = queue.pop_front().unwrap();
+        //     let prev_op = curr_tnsr.prev_op;
+        //
+        //     if let Some(po) = prev_op {
+        //
+        //
+        //     }
+        //
+        // }
+        //
+        // Ok(())
+    }
 }
 
 impl<T: DType> Add for Tensor<T> {
@@ -1054,6 +1100,15 @@ pub struct TensorMismatchedShapeError;
 impl fmt::Display for TensorMismatchedShapeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Tensors have mismatched shapes!")
+    }
+}
+
+#[derive(Debug)]
+pub struct TensorNoGradError;
+
+impl fmt::Display for TensorNoGradError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Tensor doesn't have a gradient!")
     }
 }
 
