@@ -61,7 +61,7 @@ impl<T: DType> Function<T> for sigmoid {
 impl<T: DType> Function<T> for relu {
     fn func(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
         let mask = t.greater(&T::zero().tnsr());
-        (t * mask).cast_fp32()
+        (t.mul(&mask)).cast_fp32()
     }
 
     fn call(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
@@ -71,7 +71,7 @@ impl<T: DType> Function<T> for relu {
 
 impl<T: DType> Function<T> for silu {
     fn func(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {
-        sigmoid.call(t.clone(), None) * t.cast_fp32()
+        sigmoid.call(t.clone(), None).mul(&t.cast_fp32())
     }
 
     fn call(&self, t: Tensor<T>, dim: Option<usize>) -> Tensor<f32> {

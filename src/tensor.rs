@@ -3,7 +3,6 @@ use crate::utils::consts::TENSOR_THREADING;
 use crate::utils::dtype::{Complex32, DType};
 use crate::utils::ops::{Operation, TensorOps};
 use crate::utils::{Print, ToRc, ToSlice};
-use core::slice::SlicePattern;
 use std::borrow::Borrow;
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
@@ -22,7 +21,7 @@ pub struct Tensor<T: DType> {
     pub shape: Vec<usize>,
     pub strides: Vec<usize>,
     pub grad: Option<Rc<RefCell<Tensor<f32>>>>,
-    pub prev_op: Option<(Option<Operation>, Vec<Rc<RefCell<Tensor<f32>>>>)>,
+    pub prev_op: Option<(Option<Operation>, (Rc<RefCell<Tensor<f32>>>, Rc<RefCell<Tensor<f32>>>))>,
 }
 
 //TODO unsqueeze method
@@ -740,7 +739,7 @@ impl<T: DType> Tensor<T> {
                 let chunk_2 = other
                     .get_slice(base_idx_2.to_slice())
                     .expect("Could not slice tensor!");
-                let mut result = chunk_1.clone() * chunk_2;
+                let mut result = chunk_1.clone().mul(&chunk_2);
                 result
                     .sum(result.rank() - 1, true, true)
                     .expect("Could not sum over dim!");
@@ -779,10 +778,10 @@ impl<T: DType> Tensor<T> {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
             r.prev_op = Some((
                 Some(Operation::Add),
-                vec![
+                (
                     self.clone().cast_fp32().to_rc(),
                     other.clone().cast_fp32().to_rc(),
-                ],
+                ),
             ));
             // I really don't like having to clone these tensors
         }
@@ -795,10 +794,10 @@ impl<T: DType> Tensor<T> {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
             r.prev_op = Some((
                 Some(Operation::Sub),
-                vec![
+                (
                     self.clone().cast_fp32().to_rc(),
                     other.clone().cast_fp32().to_rc(),
-                ],
+                ),
             ));
             // I really don't like having to clone these tensors
         }
@@ -807,16 +806,14 @@ impl<T: DType> Tensor<T> {
 
     pub fn mul(&self, other: &Tensor<T>) -> Tensor<T> {
         let mut r = TensorOps::new(TENSOR_THREADING).mul(self.clone(), other.clone());
-        println!("HELLO1 {}", other.requires_grad());
         if self.requires_grad() || other.requires_grad() {
-            println!("HELLO2");
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
             r.prev_op = Some((
                 Some(Operation::Mul),
-                vec![
+                (
                     self.clone().cast_fp32().to_rc(),
                     other.clone().cast_fp32().to_rc(),
-                ],
+                ),
             ));
             // I really don't like having to clone these tensors
         }
@@ -829,10 +826,10 @@ impl<T: DType> Tensor<T> {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
             r.prev_op = Some((
                 Some(Operation::Add),
-                vec![
+                (
                     self.clone().cast_fp32().to_rc(),
                     other.clone().cast_fp32().to_rc(),
-                ],
+                ),
             ));
             // I really don't like having to clone these tensors
         }
@@ -855,7 +852,7 @@ impl<T: DType> Tensor<T> {
         let mut r = TensorOps::new(TENSOR_THREADING).exp(self.clone().cast_fp32());
         if self.requires_grad() {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::Exp), vec![self.clone().cast_fp32().to_rc()]));
+            r.prev_op = Some((Some(Operation::Exp), (self.clone().cast_fp32().to_rc(), _e.tnsr().to_rc())));
             // I really don't like having to clone these tensors
         }
         r
@@ -875,7 +872,7 @@ impl<T: DType> Tensor<T> {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
             r.prev_op = Some((
                 Some(Operation::Pow),
-                vec![self.clone().cast_fp32().to_rc(), expo.clone().to_rc()],
+                (self.clone().cast_fp32().to_rc(), expo.clone().to_rc()),
             ));
             // I really don't like having to clone these tensors
         }
@@ -888,7 +885,7 @@ impl<T: DType> Tensor<T> {
             .asin(self.clone().cast_fp32(), Tensor::<f32>::new(&[1.], &[1]));
         if self.requires_grad() {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::ASin), vec![self.cast_fp32().to_rc()]));
+            r.prev_op = Some((Some(Operation::ASin), (self.cast_fp32().to_rc(), 0_f32.tnsr().to_rc())));
             // I really don't like having to clone these tensors
         }
 
@@ -902,7 +899,7 @@ impl<T: DType> Tensor<T> {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
             r.prev_op = Some((
                 Some(Operation::ACos),
-                vec![self.clone().cast_fp32().to_rc()],
+                (self.clone().cast_fp32().to_rc(), 0_f32.tnsr().to_rc()),
             ));
             // I really don't like having to clone these tensors
         }
@@ -917,7 +914,7 @@ impl<T: DType> Tensor<T> {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
             r.prev_op = Some((
                 Some(Operation::ATan),
-                vec![self.clone().cast_fp32().to_rc()],
+                (self.clone().cast_fp32().to_rc(), 0_f32.tnsr().to_rc()),
             ));
             // I really don't like having to clone these tensors
         }
@@ -984,49 +981,61 @@ impl<T: DType> Tensor<T> {
         Ok(result)
     }
 
-    pub fn cmp_grad(&self) -> Result<Tensor<T>, TensorNoGradError> {
+    fn backprop(&self, grad: Tensor<f32>) -> Result<Tensor<f32>, TensorNoGradError> {
         if !self.requires_grad() {
             return Err(TensorNoGradError);
         }
 
-        let prev_op = self.prev_op;
+        let prev_op = self.prev_op.clone();
 
         if let Some(po) = prev_op {
             let operation = po.0;
-            let tnsrs: Vec<Rc<RefCell<Tensor<f32>>>> = po.1;
+            let tnsrs = po.1;
 
             if let Some(op) = operation {
                 match op {
                     Operation::Add => {
-                        let x = tnsrs.get(0).unwrap().borrow_mut();
-                        let y = tnsrs.get(1).unwrap().borrow_mut();
+                        let x = tnsrs.0.clone();
+                        let y = tnsrs.1.clone();
+                        let mut x = x.as_ref().borrow_mut();
+                        let mut y = y.as_ref().borrow_mut();
                         if x.requires_grad() {
-                            x.grad
+                            let x_g = x.grad.clone().unwrap().clone();
+                            let mut x_g = x_g.as_ref().borrow_mut();
+                            x_g.data = x_g.clone().add(x.backprop(grad.clone()).expect("could not compute gradient!").mul(&grad)).data; // * grad
+                        }
+
+                        if y.requires_grad() {
+                            let y_g = y.grad.clone().unwrap().clone();
+                            let mut y_g = y_g.as_ref().borrow_mut();
+                            y_g.data = y_g.clone().add(y.backprop(grad.clone()).expect("could not compute gradient!").mul(&grad)).data; // * grad
+                        }
+                    },
+                    Operation::Exp => {
+                        let x = tnsrs.0.clone();
+                        let mut x = x.as_ref().borrow_mut();
+
+                        if x.requires_grad() {
+                            let x_g = x.grad.clone().unwrap().clone();
+                            let mut x_g = x_g.as_ref().borrow_mut();
+                            x_g.data = x_g.clone().add(x.backprop(grad.mul(&x)).expect("could not compute gradient!").mul(&grad)).data; // * grad
                         }
                     }
+
+
+                    _ => {}
                 }
             }
         }
 
-        Ok(Tensor::new_ones(self.shape.as_slice()))
-
-        // let mut queue = LinkedList::<&Tensor<T>>::new();
-        //
-        // queue.push_front(&self);
-        //
-        // while !queue.is_empty() {
-        //     let curr_tnsr = queue.pop_front().unwrap();
-        //     let prev_op = curr_tnsr.prev_op;
-        //
-        //     if let Some(po) = prev_op {
-        //
-        //
-        //     }
-        //
-        // }
-        //
-        // Ok(())
+        Ok(Tensor::new_ones(self.shape.as_slice()).mul(&grad))
     }
+
+    pub fn cmp_grad(&self) {
+        self.backprop(Tensor::<f32>::new_ones(self.shape.as_slice())).expect("panik!");
+    }
+
+
 }
 
 impl<T: DType> Add for Tensor<T> {
@@ -1037,13 +1046,13 @@ impl<T: DType> Add for Tensor<T> {
     }
 }
 
-impl<T: DType> Mul for Tensor<T> {
-    type Output = Self;
-
-    fn mul(self, other: Self) -> Self {
-        TensorOps::new(TENSOR_THREADING).mul(self, other)
-    }
-}
+// impl<T: DType> Mul for Tensor<T> {
+//     type Output = Self;
+//
+//     fn mul(self, other: Self) -> Self {
+//         TensorOps::new(TENSOR_THREADING).mul(self, other)
+//     }
+// }
 
 impl<T: DType> Div for Tensor<T> {
     type Output = Self;

@@ -87,7 +87,7 @@ pub fn tensor_tests() {
     println!("Tensor to complex test...");
     let c_tnsr = tnsr12.as_cmplx().unwrap();
     c_tnsr.print();
-    (c_tnsr.clone() * c_tnsr).print();
+    (c_tnsr.clone().mul(&c_tnsr)).print();
 
     let elapsed = SystemTime::now().duration_since(now).unwrap();
     println!();
@@ -112,17 +112,32 @@ pub fn ops_test() {
 }
 
 pub fn grad_test() {
-    let a = Tensor::new_grad(&[2, 3, 5, 7], &[2, 2]);
-    let b = Tensor::new_grad(&[6, 2, 1, 9], &[2, 2]);
+    let a = Tensor::new_grad(&[2, 3, 5, 7], &[2, 2]).cast_fp32();
+    let b = Tensor::new_grad(&[6, 2, 1, 9], &[2, 2]).cast_fp32();
     // println!("{}", a.requires_grad());
-    let mut c = a.add(&b);
-    let d = a.add(&c);
+    let mut c = a.exp();
 
+    c.data.print();
+
+    // c.prev_op.unwrap().1.0.borrow_mut().grad.clone().unwrap().borrow_mut().add(&b.cast_fp32());
+    //
+    // a.grad.unwrap().borrow().print();
+
+    // let mut d = c.add(&a);
+    // let mut e = d.add(&a);
+    //
+    // let mut f = e.add(&b);
+
+    c.cmp_grad();
+
+    a.grad.unwrap().borrow().print();
+    b.grad.unwrap().borrow().print();
+    println!();
     // c.print();
     // println!();
     // d.print();
 
-    c.flatten(0, true);
+    // c.flatten(0, true);
     // c.sum(0, true, true);
-    c.print();
+    // f.print();
 }
