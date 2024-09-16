@@ -25,7 +25,8 @@ create tensors of any dimension, perform operations between them, and dynamicall
 to learn rust + get better intuition behind tensors and auto differentiation behind
 sota ml frameworks.
 
-# example
+# examples
+* tensor ops
 ```rust
 fn main() {
   let mut x = Tensor::<f32>::new(&[1., 3., 6., 7.], &[2, 2]); // params - tensor data, tensor shape
@@ -47,5 +48,29 @@ fn main() {
   result.sin(); // apply trig functions across a tensor
 
   //...and a lot of other stuff :) 
+}
+```
+* autograd
+```rust
+fn main() {
+  let mut W = Tensor::<f32>::new_grad(&[0.3, 0.6, 0.8, 0.4], &[2, 2]);
+  let x = Tensor::<f32>::new(&[0.3, 0.6],  &[2, 1]);
+
+  let r = W.mm(x).unwrap();
+  r.cmp_grad(); // backprop
+
+  W.grad.unwrap().print();
+  x.grad.unwrap().print();
+
+  let a = Tensor::<f32>::new_grad(&[0.3, 0.6, 0.8, 0.4], &[2, 2]);
+  let b = Tensor::<f32>::new(&[0.5, 0.3, 0.2, 0.4],  &[2, 2]);
+
+  let r = a.add(&b).exp().pow(2_f32.tnsr()).add(&b).div(a);
+  let r = silu.call(r);
+  r.cmp_grad(); // backprop
+
+  a.grad.unwrap().print();
+  b.grad.unwrap().print();
+
 }
 ```
