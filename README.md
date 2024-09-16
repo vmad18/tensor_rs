@@ -65,7 +65,7 @@ fn main() {
   let a = Tensor::<f32>::new_grad(&[0.3, 0.6, 0.8, 0.4], &[2, 2]);
   let b = Tensor::<f32>::new(&[0.5, 0.3, 0.2, 0.4],  &[2, 2]);
 
-  let r = a.add(&b).exp().pow(2_f32.tnsr()).add(&b).div(a);
+  let r = a.add(&b).exp().pow(2_f32.tnsr()).add(&b).div(&a);
   let r = silu.call(r);
   r.cmp_grad(); // backprop
 
