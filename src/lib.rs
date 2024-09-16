@@ -76,7 +76,7 @@ pub fn tensor_tests() {
     result.sum(0, false, false).unwrap().unwrap().print();
     println!();
     println!("Tensor power test...");
-    tnsr4.clone().pow(&3.0_f32.tnsr()).print();
+    tnsr4.clone().pow(3.0_f32.tnsr()).print();
     println!();
     println!("Tensor exp test...");
     tnsr4.exp().print();
@@ -112,12 +112,12 @@ pub fn ops_test() {
 }
 
 pub fn grad_test() {
-    let a = Tensor::new_grad(&[2, 3, 5, 7], &[2, 2]).cast_fp32();
-    let b = Tensor::new_grad(&[6, 2, 1, 9], &[2, 2]).cast_fp32();
+    let a = Tensor::new_grad(&[0.2, 0.3, 0.5, 0.7], &[2, 2]).cast_fp32();
+    let b = Tensor::new_grad(&[0.6, 0.2, 0.1, 0.9], &[2, 2]).cast_fp32();
     // println!("{}", a.requires_grad());
-    let mut c = a.exp();
+    let mut c = a.pow(2_f32.tnsr()).add(&b).exp(); // .exp().add(&a).add(&a);
 
-    c.data.print();
+    // c.data.print();
 
     // c.prev_op.unwrap().1.0.borrow_mut().grad.clone().unwrap().borrow_mut().add(&b.cast_fp32());
     //

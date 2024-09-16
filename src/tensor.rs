@@ -5,7 +5,7 @@ use crate::utils::ops::{Operation, TensorOps};
 use crate::utils::{Print, ToRc, ToSlice};
 use std::borrow::Borrow;
 use std::borrow::BorrowMut;
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::collections::LinkedList;
 use std::fmt;
@@ -788,6 +788,14 @@ impl<T: DType> Tensor<T> {
         r
     }
 
+    fn add_bckwd(&self, x: &mut RefMut<Tensor<f32>>, grad: &Tensor<f32>) {
+        if x.requires_grad() {
+            let x_g = x.grad.clone().unwrap().clone();
+            let mut x_g = x_g.as_ref().borrow_mut();
+            x_g.data = x_g.clone().add(x.backprop(grad.clone()).expect("could not compute gradient!")).data;
+        }
+    }
+
     pub fn sub(&self, other: &Tensor<T>) -> Tensor<T> {
         let mut r = TensorOps::new(TENSOR_THREADING).sub(self.clone(), other.clone());
         if self.requires_grad() || other.requires_grad() {
@@ -858,7 +866,16 @@ impl<T: DType> Tensor<T> {
         r
     }
 
-    pub fn pow(&self, expo: &Tensor<f32>) -> Tensor<f32> {
+    fn exp_bckwd(&self, x: &mut RefMut<Tensor<f32>>, grad: &Tensor<f32>) {
+        if x.requires_grad() {
+            let x_g = x.grad.clone().unwrap().clone();
+            let mut x_g = x_g.as_ref().borrow_mut();
+            grad.mul(&x).data.print();
+            x_g.data = x_g.clone().add(x.backprop(grad.mul(&self.clone().cast_fp32())).expect("could not compute gradient!")).data;
+        }
+    }
+
+    pub fn pow(&self, expo: Tensor<f32>) -> Tensor<f32> {
         // let b = base.tnsr();
         // let base = base.tnsr();
         let (a, b, _shape) = TensorOps::new(TENSOR_THREADING).match_tnsrs(
@@ -872,12 +889,21 @@ impl<T: DType> Tensor<T> {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
             r.prev_op = Some((
                 Some(Operation::Pow),
-                (self.clone().cast_fp32().to_rc(), expo.clone().to_rc()),
+                (self.clone().cast_fp32().to_rc(), expo.to_rc()),
             ));
             // I really don't like having to clone these tensors
         }
 
         r
+    }
+
+    fn pow_bckwd(&self, x: &mut RefMut<Tensor<f32>>, expo: f32, grad: &Tensor<f32>) {
+        if x.requires_grad() {
+            let x_g = x.grad.clone().unwrap().clone();
+            let mut x_g = x_g.as_ref().borrow_mut();
+            grad.mul(&x).data.print();
+            x_g.data = x_g.clone().add(x.backprop(grad.mul(&x.pow((expo-1.).tnsr()).mul(&expo.tnsr()))).expect("could not compute gradient!")).data;
+        }
     }
 
     pub fn asin(self) -> Tensor<f32> {
@@ -999,29 +1025,43 @@ impl<T: DType> Tensor<T> {
                         let y = tnsrs.1.clone();
                         let mut x = x.as_ref().borrow_mut();
                         let mut y = y.as_ref().borrow_mut();
-                        if x.requires_grad() {
+
+                        self.add_bckwd(&mut x, &grad);
+                        self.add_bckwd(&mut y, &grad);
+/*                        if x.requires_grad() {
                             let x_g = x.grad.clone().unwrap().clone();
                             let mut x_g = x_g.as_ref().borrow_mut();
-                            x_g.data = x_g.clone().add(x.backprop(grad.clone()).expect("could not compute gradient!").mul(&grad)).data; // * grad
-                        }
+                            x_g.data = x_g.clone().add(x.backprop(grad.clone()).expect("could not compute gradient!")).data;
+                        }*/
 
-                        if y.requires_grad() {
+/*                        if y.requires_grad() {
                             let y_g = y.grad.clone().unwrap().clone();
                             let mut y_g = y_g.as_ref().borrow_mut();
-                            y_g.data = y_g.clone().add(y.backprop(grad.clone()).expect("could not compute gradient!").mul(&grad)).data; // * grad
-                        }
+                            y_g.data = y_g.clone().add(y.backprop(grad.clone()).expect("could not compute gradient!")).data;
+                        }*/
                     },
                     Operation::Exp => {
                         let x = tnsrs.0.clone();
                         let mut x = x.as_ref().borrow_mut();
 
-                        if x.requires_grad() {
+                        self.exp_bckwd(&mut x, &grad);
+
+/*                        if x.requires_grad() {
                             let x_g = x.grad.clone().unwrap().clone();
                             let mut x_g = x_g.as_ref().borrow_mut();
-                            x_g.data = x_g.clone().add(x.backprop(grad.mul(&x)).expect("could not compute gradient!").mul(&grad)).data; // * grad
-                        }
-                    }
+                            grad.mul(&x).data.print();
+                            x_g.data = x_g.clone().add(x.backprop(grad.mul(&self.clone().cast_fp32())).expect("could not compute gradient!")).data;
+                        }*/
+                    },
 
+                    Operation::Pow => {
+                        let x = tnsrs.0.clone();
+                        let y = tnsrs.1.clone();
+                        let mut x = x.as_ref().borrow_mut();
+                        let y = y.as_ref().borrow_mut().data[0];
+
+                        self.pow_bckwd(&mut x, y, &grad);
+                    }
 
                     _ => {}
                 }
