@@ -15,6 +15,7 @@ create tensors of any dimension, perform operations between them, and dynamicall
 # to-do
 * softmax
 * other useful functions
+* backward pass for reshape, sum, etc.
 * other tensor initializations
 * gemm
 * other optimization
