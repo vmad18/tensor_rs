@@ -3,14 +3,11 @@ use crate::utils::consts::TENSOR_THREADING;
 use crate::utils::dtype::{Complex32, DType};
 use crate::utils::ops::{Operation, TensorOps};
 use crate::utils::{Print, ToRc, ToSlice};
-use std::borrow::Borrow;
-use std::borrow::BorrowMut;
 use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
-use std::collections::LinkedList;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::Add;
 use std::rc::Rc;
 
 // threading - T/F | auto - T/F | thread_count | usize

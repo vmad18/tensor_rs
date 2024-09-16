@@ -9,8 +9,6 @@ use crate::utils::consts::_e;
 use crate::utils::dtype::DType;
 use crate::utils::{Print, ToRc};
 
-// use std::f32::consts::E;
-
 #[derive(Debug)]
 pub struct TensorOps {
     pub threaded: bool,

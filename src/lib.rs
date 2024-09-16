@@ -112,34 +112,52 @@ pub fn ops_test() {
 }
 
 pub fn grad_test() {
-    let mut a = Tensor::new_grad(&[0.2, 0.3, 0.5, 0.7], &[2, 2]).cast_fp32();
-    let b = Tensor::new_grad(&[0.2, 0.4, 0.5, 0.6], &[2, 2]).cast_fp32();
-    // println!("{}", a.requires_grad());
-    let c = silu.call(a.clone(), None); // 3_f32.tnsr().mul(&a); // sigmoid.call(a.clone(), None); // a.mm(b.clone()).unwrap(); // a.pow(2_f32.tnsr()).add(&b).exp(); // .exp().add(&a).add(&a);
+    let a = Tensor::new_grad(&[0.2, 0.3, 0.5, 0.7], &[2, 2]).cast_fp32();
+    let b = Tensor::new_grad(&[0.7, 0.4, 0.5, 0.6], &[2, 2]).cast_fp32();
+    let c = silu.call(a.clone(), None);
 
     c.data.print();
-
-    // c.data.print();
-
-    // c.prev_op.unwrap().1.0.borrow_mut().grad.clone().unwrap().borrow_mut().add(&b.cast_fp32());
-    //
-    // a.grad.unwrap().borrow().print();
-
-    // let mut d = c.add(&a);
-    // let mut e = d.add(&a);
-    //
-    // let mut f = e.add(&b);
 
     c.cmp_grad();
 
     a.grad.unwrap().borrow().print();
     b.grad.unwrap().borrow().print();
     println!();
-    // c.print();
-    // println!();
-    // d.print();
 
-    // c.flatten(0, true);
-    // c.sum(0, true, true);
-    // f.print();
+    let a = Tensor::new_grad(&[0.2, 0.3, 0.5, 0.7], &[2, 2]).cast_fp32();
+    let b = Tensor::new_grad(&[0.7, 0.4, 0.5, 0.6], &[2, 2]).cast_fp32();
+    let c = 3_f32.tnsr().mul(&a);
+
+    c.data.print();
+
+    c.cmp_grad();
+
+    a.grad.unwrap().borrow().print();
+    b.grad.unwrap().borrow().print();
+    println!();
+
+    let mut a = Tensor::new_grad(&[0.2, 0.3, 0.5, 0.7], &[2, 2]).cast_fp32();
+    let b = Tensor::new_grad(&[0.7, 0.4], &[2, 1]).cast_fp32();
+    let c = a.mm(b.clone()).unwrap();
+
+    c.data.print();
+
+    c.cmp_grad();
+
+    a.grad.unwrap().borrow().print();
+    b.grad.unwrap().borrow().print();
+    println!();
+
+    let a = Tensor::new_grad(&[0.2, 0.3, 0.5, 0.7], &[2, 2]).cast_fp32();
+    let b = Tensor::new_grad(&[0.7, 0.4, 1.2, 3.4], &[2, 2]).cast_fp32();
+    let c = 3_f32.tnsr().mul(&a).add(&b);
+    let d = c.add(&a).add(&a.pow(2_f32.tnsr()).exp()); // 3*a + b + a + e^(a^2)
+
+    d.data.print();
+
+    d.cmp_grad();
+
+    a.grad.unwrap().borrow().print();
+    b.grad.unwrap().borrow().print();
+    println!();
 }
