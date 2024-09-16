@@ -52,7 +52,7 @@ pub fn tensor_tests() {
     let _ = tnsr + tnsr2; // don't print this out lol
     println!();
     println!("Scalar mult result...");
-    (tnsr3 / 3.0.tnsr()).print();
+    (tnsr3.div(&3.0.tnsr())).print();
     println!();
     println!("Inner (dot) product test result...");
     (tnsr6.dot(tnsr7.clone())).unwrap().print();
