@@ -6,8 +6,8 @@ use utils::{
     ops::{relu, sigmoid, Function},
 };
 
-use crate::tensor::Tensor;
 use crate::utils::dtype::DType;
+use crate::{tensor::Tensor, utils::ops::silu};
 
 use std::f32::consts::PI;
 use std::time::SystemTime;
@@ -112,10 +112,12 @@ pub fn ops_test() {
 }
 
 pub fn grad_test() {
-    let a = Tensor::new_grad(&[0.2, 0.3, 0.5, 0.7], &[2, 2]).cast_fp32();
-    let b = Tensor::new_grad(&[0.6, 0.2, 0.1, 0.9], &[2, 2]).cast_fp32();
+    let mut a = Tensor::new_grad(&[0.2, 0.3, 0.5, 0.7], &[2, 2]).cast_fp32();
+    let b = Tensor::new_grad(&[0.2, 0.4, 0.5, 0.6], &[2, 2]).cast_fp32();
     // println!("{}", a.requires_grad());
-    let mut c = a.pow(2_f32.tnsr()).add(&b).exp(); // .exp().add(&a).add(&a);
+    let c = silu.call(a.clone(), None); // 3_f32.tnsr().mul(&a); // sigmoid.call(a.clone(), None); // a.mm(b.clone()).unwrap(); // a.pow(2_f32.tnsr()).add(&b).exp(); // .exp().add(&a).add(&a);
+
+    c.data.print();
 
     // c.data.print();
 

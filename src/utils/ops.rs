@@ -149,11 +149,11 @@ impl TensorOps {
     }
 
     pub fn init_ops_tc(threaded: bool, auto: bool, thread_count: usize) -> Self {
-        /*        let sys_threads = thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(1); // leave one thread left for the system
-                let thread_count = thread_count.min(sys_threads); // ensure that we don't fork bomb ourselves :p
-        */
+        let sys_threads = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1); // leave one thread left for the system
+        let thread_count = thread_count.min(sys_threads); // ensure that we don't fork bomb ourselves :p
+
         TensorOps {
             threaded,
             auto,

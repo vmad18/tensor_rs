@@ -21,7 +21,10 @@ pub struct Tensor<T: DType> {
     pub shape: Vec<usize>,
     pub strides: Vec<usize>,
     pub grad: Option<Rc<RefCell<Tensor<f32>>>>,
-    pub prev_op: Option<(Option<Operation>, (Rc<RefCell<Tensor<f32>>>, Rc<RefCell<Tensor<f32>>>))>,
+    pub prev_op: Option<(
+        Option<Operation>,
+        (Rc<RefCell<Tensor<f32>>>, Rc<RefCell<Tensor<f32>>>),
+    )>,
 }
 
 //TODO unsqueeze method
@@ -669,6 +672,7 @@ impl<T: DType> Tensor<T> {
         transpose_outer: bool,
     ) -> Result<Tensor<T>, TensorMismatchedShapeError> {
         let mut this = (&mut *self).clone();
+        let save_other = other.clone();
 
         if this.rank() < 2 || other.rank() < 2 {
             return Err(TensorMismatchedShapeError);
@@ -750,6 +754,17 @@ impl<T: DType> Tensor<T> {
             }
         }
 
+        if self.requires_grad() || save_other.requires_grad() {
+            aggregator.grad = Some(Tensor::new_zeros(aggregator.shape.as_slice()).to_rc());
+            aggregator.prev_op = Some((
+                Some(Operation::MatMul),
+                (
+                    self.clone().cast_fp32().to_rc(),
+                    save_other.clone().cast_fp32().to_rc(),
+                ),
+            ));
+            // I really don't like having to clone these tensors
+        }
         Ok(aggregator)
     }
 
@@ -772,6 +787,41 @@ impl<T: DType> Tensor<T> {
         self.matmul(other, false, true)
     }
 
+    fn mm_bckwd(
+        &self,
+        x: &mut RefMut<Tensor<f32>>,
+        y: &mut RefMut<Tensor<f32>>,
+        lhs: bool,
+        grad: &Tensor<f32>,
+    ) {
+        if x.requires_grad() {
+            let x_g = x.grad.clone().unwrap().clone();
+            let mut x_g = x_g.as_ref().borrow_mut();
+            let mut grad = grad.clone();
+
+            if lhs {
+                let y_t = y
+                    .clone()
+                    .transpose((y.rank() - 2, y.rank() - 1), false)
+                    .expect("could not transpose!")
+                    .unwrap();
+                grad = grad.mm(y_t).unwrap();
+            } else {
+                let mut y_t = y
+                    .clone()
+                    .transpose((y.rank() - 2, y.rank() - 1), false)
+                    .expect("could not transpose!")
+                    .unwrap();
+                grad = y_t.mm(grad).unwrap();
+            }
+
+            x_g.data = x_g
+                .clone()
+                .add(x.backprop(grad).expect("could not compute gradient!"))
+                .data;
+        }
+    }
+
     pub fn add(&self, other: &Tensor<T>) -> Tensor<T> {
         let mut r = TensorOps::new(TENSOR_THREADING).add(self.clone(), other.clone());
         if self.requires_grad() || other.requires_grad() {
@@ -792,7 +842,13 @@ impl<T: DType> Tensor<T> {
         if x.requires_grad() {
             let x_g = x.grad.clone().unwrap().clone();
             let mut x_g = x_g.as_ref().borrow_mut();
-            x_g.data = x_g.clone().add(x.backprop(grad.clone()).expect("could not compute gradient!")).data;
+            x_g.data = x_g
+                .clone()
+                .add(
+                    x.backprop(grad.clone())
+                        .expect("could not compute gradient!"),
+                )
+                .data;
         }
     }
 
@@ -828,23 +884,35 @@ impl<T: DType> Tensor<T> {
         r
     }
 
-    fn mul_bckwd(&self, x: &mut RefMut<Tensor<f32>>, y: &mut RefMut<Tensor<f32>>, grad: &Tensor<f32>) {
+    fn mul_bckwd(
+        &self,
+        x: &mut RefMut<Tensor<f32>>,
+        y: &mut RefMut<Tensor<f32>>,
+        grad: &Tensor<f32>,
+    ) {
         if x.requires_grad() {
             let x_g = x.grad.clone().unwrap().clone();
             let mut x_g = x_g.as_ref().borrow_mut();
-            x_g.data = x_g.clone().add(x.backprop(grad.clone().mul(&y)).expect("could not compute gradient!")).data;
+            x_g.data = x_g
+                .clone()
+                .add(
+                    x.backprop(grad.clone().mul(&y))
+                        .expect("could not compute gradient!"),
+                )
+                .data;
         }
     }
 
-    pub fn div(&self, other: &Tensor<T>) -> Tensor<T> {
-        let mut r = TensorOps::new(TENSOR_THREADING).mul(self.clone(), other.clone().pow((-1_f32).tnsr()));
+    pub fn div(&self, other: &Tensor<T>) -> Tensor<f32> {
+        let other_r = other.clone().pow((-1_f32).tnsr());
+        let mut r = TensorOps::new(TENSOR_THREADING).mul(self.clone().cast_fp32(), other_r.clone());
         if self.requires_grad() || other.requires_grad() {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
             r.prev_op = Some((
-                Some(Operation::Add),
+                Some(Operation::Div),
                 (
                     self.clone().cast_fp32().to_rc(),
-                    other.clone().cast_fp32().to_rc(),
+                    other_r.cast_fp32().to_rc(),
                 ),
             ));
             // I really don't like having to clone these tensors
@@ -852,32 +920,74 @@ impl<T: DType> Tensor<T> {
         r
     }
 
-    pub fn sin(self) -> Tensor<f32> {
-        TensorOps::new(TENSOR_THREADING).sin(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
+    pub fn sin(&self) -> Tensor<f32> {
+        let mut r = TensorOps::new(TENSOR_THREADING)
+            .sin(self.clone().cast_fp32(), Tensor::<f32>::new(&[1.], &[1]));
+        if self.requires_grad() {
+            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
+            r.prev_op = Some((
+                Some(Operation::Sin),
+                (self.clone().cast_fp32().to_rc(), _e.tnsr().to_rc()),
+            ));
+            // I really don't like having to clone these tensors
+        }
+        r
     }
 
     fn sin_bckwd(&self, x: &mut RefMut<Tensor<f32>>, grad: &Tensor<f32>) {
         if x.requires_grad() {
             let x_g = x.grad.clone().unwrap().clone();
             let mut x_g = x_g.as_ref().borrow_mut();
-            x_g.data = x_g.clone().add(x.backprop(grad.mul(&self.clone().cast_fp32().cos())).expect("could not compute gradient!")).data;
+            x_g.data = x_g
+                .clone()
+                .add(
+                    x.backprop(grad.mul(&self.clone().cast_fp32().cos()))
+                        .expect("could not compute gradient!"),
+                )
+                .data;
         }
     }
 
-    pub fn cos(self) -> Tensor<f32> {
-        TensorOps::new(TENSOR_THREADING).cos(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
+    pub fn cos(&self) -> Tensor<f32> {
+        let mut r = TensorOps::new(TENSOR_THREADING)
+            .cos(self.clone().cast_fp32(), Tensor::<f32>::new(&[1.], &[1]));
+        if self.requires_grad() {
+            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
+            r.prev_op = Some((
+                Some(Operation::Cos),
+                (self.clone().cast_fp32().to_rc(), _e.tnsr().to_rc()),
+            ));
+            // I really don't like having to clone these tensors
+        }
+        r
     }
 
     fn cos_bckwd(&self, x: &mut RefMut<Tensor<f32>>, grad: &Tensor<f32>) {
         if x.requires_grad() {
             let x_g = x.grad.clone().unwrap().clone();
             let mut x_g = x_g.as_ref().borrow_mut();
-            x_g.data = x_g.clone().add(x.backprop(grad.mul(&self.clone().cast_fp32().sin().mul(&(-1_f32).tnsr()))).expect("could not compute gradient!")).data;
+            x_g.data = x_g
+                .clone()
+                .add(
+                    x.backprop(grad.mul(&self.clone().cast_fp32().sin().mul(&(-1_f32).tnsr())))
+                        .expect("could not compute gradient!"),
+                )
+                .data;
         }
     }
 
-    pub fn tan(self) -> Tensor<f32> {
-        TensorOps::new(TENSOR_THREADING).tan(self.cast_fp32(), Tensor::<f32>::new(&[1.], &[1]))
+    pub fn tan(&self) -> Tensor<f32> {
+        let mut r = TensorOps::new(TENSOR_THREADING)
+            .tan(self.clone().cast_fp32(), Tensor::<f32>::new(&[1.], &[1]));
+        if self.requires_grad() {
+            r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
+            r.prev_op = Some((
+                Some(Operation::Tan),
+                (self.clone().cast_fp32().to_rc(), _e.tnsr().to_rc()),
+            ));
+            // I really don't like having to clone these tensors
+        }
+        r
     }
 
     fn tan_bckwd(&self, x: &mut RefMut<Tensor<f32>>, grad: &Tensor<f32>) {
@@ -885,7 +995,13 @@ impl<T: DType> Tensor<T> {
             let x_g = x.grad.clone().unwrap().clone();
             let mut x_g = x_g.as_ref().borrow_mut();
             let sec_2 = 1_f32.tnsr().div(&self.clone().cos().pow(2_f32.tnsr()));
-            x_g.data = x_g.clone().add(x.backprop(grad.mul(&sec_2)).expect("could not compute gradient!")).data;
+            x_g.data = x_g
+                .clone()
+                .add(
+                    x.backprop(grad.mul(&sec_2))
+                        .expect("could not compute gradient!"),
+                )
+                .data;
         }
     }
 
@@ -893,7 +1009,10 @@ impl<T: DType> Tensor<T> {
         let mut r = TensorOps::new(TENSOR_THREADING).exp(self.clone().cast_fp32());
         if self.requires_grad() {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::Exp), (self.clone().cast_fp32().to_rc(), _e.tnsr().to_rc())));
+            r.prev_op = Some((
+                Some(Operation::Exp),
+                (self.clone().cast_fp32().to_rc(), _e.tnsr().to_rc()),
+            ));
             // I really don't like having to clone these tensors
         }
         r
@@ -903,7 +1022,13 @@ impl<T: DType> Tensor<T> {
         if x.requires_grad() {
             let x_g = x.grad.clone().unwrap().clone();
             let mut x_g = x_g.as_ref().borrow_mut();
-            x_g.data = x_g.clone().add(x.backprop(grad.mul(&self.clone().cast_fp32())).expect("could not compute gradient!")).data;
+            x_g.data = x_g
+                .clone()
+                .add(
+                    x.backprop(grad.mul(&self.clone().cast_fp32()))
+                        .expect("could not compute gradient!"),
+                )
+                .data;
         }
     }
 
@@ -933,7 +1058,13 @@ impl<T: DType> Tensor<T> {
         if x.requires_grad() {
             let x_g = x.grad.clone().unwrap().clone();
             let mut x_g = x_g.as_ref().borrow_mut();
-            x_g.data = x_g.clone().add(x.backprop(grad.mul(&x.pow((expo - 1.).tnsr()).mul(&expo.tnsr()))).expect("could not compute gradient!")).data;
+            x_g.data = x_g
+                .clone()
+                .add(
+                    x.backprop(grad.mul(&x.pow((expo - 1.).tnsr()).mul(&expo.tnsr())))
+                        .expect("could not compute gradient!"),
+                )
+                .data;
         }
     }
 
@@ -942,7 +1073,10 @@ impl<T: DType> Tensor<T> {
             .asin(self.clone().cast_fp32(), Tensor::<f32>::new(&[1.], &[1]));
         if self.requires_grad() {
             r.grad = Some(Tensor::new_zeros(r.shape.as_slice()).to_rc());
-            r.prev_op = Some((Some(Operation::ASin), (self.cast_fp32().to_rc(), 0_f32.tnsr().to_rc())));
+            r.prev_op = Some((
+                Some(Operation::ASin),
+                (self.cast_fp32().to_rc(), 0_f32.tnsr().to_rc()),
+            ));
             // I really don't like having to clone these tensors
         }
 
@@ -955,10 +1089,15 @@ impl<T: DType> Tensor<T> {
             let mut x_g = x_g.as_ref().borrow_mut();
             let x_sqrt = 1_f32.tnsr().sub(&x.pow(2_f32.tnsr()));
             let x_rsqrt = 1_f32.tnsr().div(&x_sqrt);
-            x_g.data = x_g.clone().add(x.backprop(grad.mul(&x_rsqrt)).expect("could not compute gradient!")).data;
+            x_g.data = x_g
+                .clone()
+                .add(
+                    x.backprop(grad.mul(&x_rsqrt))
+                        .expect("could not compute gradient!"),
+                )
+                .data;
         }
     }
-
 
     pub fn acos(&self) -> Tensor<f32> {
         let mut r = TensorOps::new(TENSOR_THREADING)
@@ -981,7 +1120,13 @@ impl<T: DType> Tensor<T> {
             let mut x_g = x_g.as_ref().borrow_mut();
             let x_sqrt = 1_f32.tnsr().sub(&x.pow(2_f32.tnsr())).pow((-2_f32).tnsr());
             let x_rsqrt = (-1_f32).tnsr().div(&x_sqrt);
-            x_g.data = x_g.clone().add(x.backprop(grad.mul(&x_rsqrt)).expect("could not compute gradient!")).data;
+            x_g.data = x_g
+                .clone()
+                .add(
+                    x.backprop(grad.mul(&x_rsqrt))
+                        .expect("could not compute gradient!"),
+                )
+                .data;
         }
     }
 
@@ -1006,7 +1151,13 @@ impl<T: DType> Tensor<T> {
             let mut x_g = x_g.as_ref().borrow_mut();
             let x_sqrt = 1_f32.tnsr().add(x.pow(2_f32.tnsr()));
             let x_rsqrt = (1_f32).tnsr().div(&x_sqrt);
-            x_g.data = x_g.clone().add(x.backprop(grad.mul(&x_rsqrt)).expect("could not compute gradient!")).data;
+            x_g.data = x_g
+                .clone()
+                .add(
+                    x.backprop(grad.mul(&x_rsqrt))
+                        .expect("could not compute gradient!"),
+                )
+                .data;
         }
     }
 
@@ -1096,10 +1247,12 @@ impl<T: DType> Tensor<T> {
                         let x = tnsrs.0.clone();
                         let y = tnsrs.1.clone();
                         let mut x = x.as_ref().borrow_mut();
-                        let mut y = RefMut::new(y.as_ref().borrow_mut().mul(&(-1_f32).tnsr()));
+                        let y = y.as_ref().borrow_mut().mul(&(-1_f32).tnsr());
+
+                        let y = RefCell::new(y);
 
                         self.add_bckwd(&mut x, &grad);
-                        self.add_bckwd(&mut y, &grad);
+                        self.add_bckwd(&mut y.borrow_mut(), &grad);
                     }
 
                     Operation::Mul | Operation::Div => {
@@ -1170,6 +1323,16 @@ impl<T: DType> Tensor<T> {
                         self.atan_bckwd(&mut x, &grad);
                     }
 
+                    Operation::MatMul => {
+                        let x = tnsrs.0.clone();
+                        let y = tnsrs.1.clone();
+                        let mut x = x.as_ref().borrow_mut();
+                        let mut y = y.as_ref().borrow_mut();
+
+                        self.mm_bckwd(&mut x, &mut y, true, &grad);
+                        self.mm_bckwd(&mut y, &mut x, false, &grad);
+                    }
+
                     _ => {}
                 }
             }
@@ -1179,7 +1342,8 @@ impl<T: DType> Tensor<T> {
     }
 
     pub fn cmp_grad(&self) {
-        self.backprop(Tensor::<f32>::new_ones(self.shape.as_slice())).expect("panik!");
+        self.backprop(Tensor::<f32>::new_ones(self.shape.as_slice()))
+            .expect("panik!");
     }
 }
 
