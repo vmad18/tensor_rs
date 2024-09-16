@@ -1,10 +1,11 @@
-# tensor_rs (w.i.p)
+# tensor_rs
 
-create tensors of any dimension and perform operations between them!
+create tensors of any dimension, perform operations between them, and dynamically compute gradients
 
 # done
 * tensors
 * tenosr ops
+* autograd
 * cpu blocked parallelization
 * matmul
 * outer/inner prods
@@ -12,9 +13,12 @@ create tensors of any dimension and perform operations between them!
 * complex numbers
 
 # to-do
-* autograd
+* softmax
+* other useful functions
+* other tensor initializations
 * gemm
 * other optimization
+* some examples
 
 # purpose
 to learn rust + get better intuition behind tensors and auto differentiation behind
