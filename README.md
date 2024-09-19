@@ -19,7 +19,7 @@ create tensors of any dimension, perform operations between them, and dynamicall
 * other tensor initializations
 * gemm
 * other optimization
-* some examples
+* fix rust code (if you see any better ways of implementing, lmk)
 
 # purpose
 to learn rust + get better intuition behind tensors and auto differentiation behind
